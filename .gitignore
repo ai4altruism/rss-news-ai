@@ -36,3 +36,7 @@ data/latest_summary.json
 # OS specific files
 .DS_Store
 Thumbs.db
+
+# tar files
+*.tar
+*.tar.gz
