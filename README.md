@@ -2,8 +2,6 @@
 
 A Python-based application that monitors RSS feeds for generative AI news, filters relevant stories using OpenAI's API, groups them by topic, and presents summaries through multiple output formats including web dashboard, Slack, and email.
 
-![Generative AI News Tracker Dashboard](https://raw.githubusercontent.com/yourusername/genai-news-tracker/main/docs/images/dashboard_preview.png)
-
 ## Features
 
 - **RSS Feed Monitoring**: Tracks multiple AI-focused RSS feeds for the latest news
