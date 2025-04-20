@@ -1,0 +1,38 @@
+# Local configuration files
+.env
+
+# Python bytecode caches - explicitly target all __pycache__ directories
+__pycache__/
+*/__pycache__/
+**/__pycache__/
+*.py[cod]
+*/*.py[cod]
+**/*.py[cod]
+
+# Virtual environments
+venv/
+.venv/
+ENV/
+
+# Log files - explicitly target logs directory and all log files
+/logs/
+/logs/*.log
+logs/
+logs/*.log
+*.log
+
+# Application data
+/data/
+/data/*.json
+data/
+data/*.json
+data/cache.json
+data/latest_summary.json
+
+# IDE specific files
+.idea/
+.vscode/
+
+# OS specific files
+.DS_Store
+Thumbs.db
