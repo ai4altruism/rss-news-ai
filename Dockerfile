@@ -11,6 +11,19 @@ COPY src/ ./src/
 #COPY .env.example ./.env.example
 
 # Create necessary directories with proper permissions
+# NOTE: In production, mount these as volumes from the host for:
+#   - Data persistence across container rebuilds
+#   - Easy backup and monitoring
+#   - Direct access for maintenance
+#
+# Example docker run with volume mounts:
+#   docker run -d \
+#     -v /var/lib/rss-news-ai/data:/app/data \
+#     -v /var/lib/rss-news-ai/logs:/app/logs \
+#     -p 5002:5002 \
+#     --env-file .env \
+#     rss-news-ai
+#
 RUN mkdir -p logs data
 RUN chmod -R 777 logs data
 
@@ -21,6 +34,10 @@ COPY src/templates/ ./src/templates/
 # Set environment variables
 ENV PYTHONPATH=/app
 ENV PYTHONUNBUFFERED=1
+
+# Historical database path (can be overridden via environment)
+# Mount /app/data as a volume to persist database outside container
+ENV HISTORY_DB_PATH=/app/data/history.db
 
 # Expose port for web dashboard
 EXPOSE 5002
