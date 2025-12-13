@@ -606,3 +606,196 @@ class TestGetDateRange:
 
         assert date_range["earliest"] is None
         assert date_range["latest"] is None
+
+
+# =============================================================================
+# Sprint 5: Topic Alias Tests
+# =============================================================================
+
+class TestTopicAliases:
+    """Tests for topic alias management."""
+
+    def test_add_topic_alias(self, temp_db_path):
+        """Verify alias creation."""
+        from history_db import add_topic_alias, list_topic_aliases
+        init_database(temp_db_path)
+
+        result = add_topic_alias("gpt-4", "openai", temp_db_path)
+
+        assert result is True
+        aliases = list_topic_aliases(temp_db_path)
+        assert len(aliases) == 1
+        assert aliases[0]["alias"] == "gpt-4"
+        assert aliases[0]["canonical_name"] == "openai"
+
+    def test_add_topic_alias_normalizes(self, temp_db_path):
+        """Verify alias names are normalized."""
+        from history_db import add_topic_alias, list_topic_aliases
+        init_database(temp_db_path)
+
+        result = add_topic_alias("  GPT-4  ", "  OpenAI  ", temp_db_path)
+
+        assert result is True
+        aliases = list_topic_aliases(temp_db_path)
+        assert aliases[0]["alias"] == "gpt-4"
+        assert aliases[0]["canonical_name"] == "openai"
+
+    def test_add_topic_alias_same_name_fails(self, temp_db_path):
+        """Verify alias cannot equal canonical name."""
+        from history_db import add_topic_alias
+        init_database(temp_db_path)
+
+        result = add_topic_alias("openai", "OpenAI", temp_db_path)
+
+        assert result is False
+
+    def test_remove_topic_alias(self, temp_db_path):
+        """Verify alias removal."""
+        from history_db import add_topic_alias, remove_topic_alias, list_topic_aliases
+        init_database(temp_db_path)
+
+        add_topic_alias("gpt", "openai", temp_db_path)
+        assert len(list_topic_aliases(temp_db_path)) == 1
+
+        result = remove_topic_alias("gpt", temp_db_path)
+
+        assert result is True
+        assert len(list_topic_aliases(temp_db_path)) == 0
+
+    def test_remove_nonexistent_alias(self, temp_db_path):
+        """Verify removing nonexistent alias returns False."""
+        from history_db import remove_topic_alias
+        init_database(temp_db_path)
+
+        result = remove_topic_alias("nonexistent", temp_db_path)
+
+        assert result is False
+
+    def test_topic_alias_applied_on_save(self, temp_db_path, sample_summary):
+        """Verify alias is applied when saving summary."""
+        from history_db import add_topic_alias
+        init_database(temp_db_path)
+
+        # Add alias before saving
+        add_topic_alias("openai developments", "openai", temp_db_path)
+
+        # Save summary (topic should be normalized to alias canonical)
+        save_summary_to_db(sample_summary, temp_db_path)
+
+        # Search should find it under canonical name
+        results = topic_search("openai", db_path=temp_db_path)
+        assert len(results) > 0
+
+    def test_get_unique_topics(self, temp_db_path, sample_summaries_multi_day):
+        """Verify unique topics list."""
+        from history_db import get_unique_topics
+        init_database(temp_db_path)
+
+        for summary in sample_summaries_multi_day:
+            save_summary_to_db(summary, temp_db_path)
+
+        topics = get_unique_topics(temp_db_path)
+
+        assert len(topics) > 0
+        for topic in topics:
+            assert "normalized_name" in topic
+            assert "count" in topic
+            assert topic["count"] > 0
+
+
+# =============================================================================
+# Sprint 5: Export Tests
+# =============================================================================
+
+class TestExportFunctions:
+    """Tests for data export functions."""
+
+    def test_export_topics_csv(self, temp_db_path, sample_summary):
+        """Verify topics CSV export."""
+        from history_db import export_topics_csv
+        init_database(temp_db_path)
+        save_summary_to_db(sample_summary, temp_db_path)
+
+        csv_data = export_topics_csv(db_path=temp_db_path)
+
+        assert csv_data  # Not empty
+        assert "date,topic,normalized_name" in csv_data  # Header
+        assert "openai" in csv_data.lower()  # Content
+
+    def test_export_topics_csv_date_filter(self, temp_db_path, sample_summaries_multi_day):
+        """Verify CSV export with date filtering."""
+        from history_db import export_topics_csv
+        init_database(temp_db_path)
+
+        for summary in sample_summaries_multi_day:
+            save_summary_to_db(summary, temp_db_path)
+
+        all_csv = export_topics_csv(db_path=temp_db_path)
+        filtered_csv = export_topics_csv(
+            start_date="2024-11-01",
+            end_date="2024-11-07",
+            db_path=temp_db_path
+        )
+
+        # Filtered should have fewer rows
+        all_lines = all_csv.strip().split('\n')
+        filtered_lines = filtered_csv.strip().split('\n')
+        assert len(filtered_lines) <= len(all_lines)
+
+    def test_export_articles_csv(self, temp_db_path, sample_summary):
+        """Verify articles CSV export."""
+        from history_db import export_articles_csv
+        init_database(temp_db_path)
+        save_summary_to_db(sample_summary, temp_db_path)
+
+        csv_data = export_articles_csv(db_path=temp_db_path)
+
+        assert csv_data  # Not empty
+        assert "date,topic,title,link" in csv_data  # Header
+        assert "http" in csv_data  # Should have URLs
+
+    def test_export_json(self, temp_db_path, sample_summary):
+        """Verify JSON export."""
+        from history_db import export_data_json
+        init_database(temp_db_path)
+        save_summary_to_db(sample_summary, temp_db_path)
+
+        json_data = export_data_json(db_path=temp_db_path)
+
+        assert "metadata" in json_data
+        assert "summaries" in json_data
+        assert "topics" in json_data
+        assert json_data["metadata"]["summary_count"] == 1
+        assert json_data["metadata"]["topic_count"] > 0
+
+    def test_export_json_includes_articles(self, temp_db_path, sample_summary):
+        """Verify JSON export includes article data."""
+        from history_db import export_data_json
+        init_database(temp_db_path)
+        save_summary_to_db(sample_summary, temp_db_path)
+
+        json_data = export_data_json(db_path=temp_db_path)
+
+        # Topics should include articles
+        assert len(json_data["topics"]) > 0
+        for topic in json_data["topics"]:
+            assert "articles" in topic
+            for article in topic["articles"]:
+                assert "link" in article
+
+    def test_export_json_date_filter(self, temp_db_path, sample_summaries_multi_day):
+        """Verify JSON export with date filtering."""
+        from history_db import export_data_json
+        init_database(temp_db_path)
+
+        for summary in sample_summaries_multi_day:
+            save_summary_to_db(summary, temp_db_path)
+
+        all_data = export_data_json(db_path=temp_db_path)
+        filtered_data = export_data_json(
+            start_date="2024-11-01",
+            end_date="2024-11-07",
+            db_path=temp_db_path
+        )
+
+        assert filtered_data["metadata"]["topic_count"] <= all_data["metadata"]["topic_count"]
