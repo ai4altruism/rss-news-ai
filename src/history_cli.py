@@ -28,6 +28,13 @@ from history_db import (
     topic_search,
 )
 
+# Import query engine (optional - may not be available without API key)
+try:
+    from query_engine import QueryEngine, query as nl_query
+    QUERY_ENGINE_AVAILABLE = True
+except ImportError:
+    QUERY_ENGINE_AVAILABLE = False
+
 
 # =============================================================================
 # Output Formatting
@@ -320,6 +327,47 @@ def cmd_search(args):
     return 0
 
 
+def cmd_query(args):
+    """Execute natural language query."""
+    if not QUERY_ENGINE_AVAILABLE:
+        print("Query engine not available. Ensure query_engine.py is present and dependencies installed.")
+        return 1
+
+    db_path = args.db_path or get_db_path()
+
+    if not os.path.exists(db_path):
+        print(f"Database not found at {db_path}. Run 'init' first.")
+        return 1
+
+    # Check for API key
+    env_vars = dotenv_values(".env")
+    api_key = os.environ.get("OPENAI_API_KEY") or env_vars.get("OPENAI_API_KEY")
+
+    if not api_key:
+        print("OpenAI API key required for natural language queries.")
+        print("Set OPENAI_API_KEY in .env file or environment variable.")
+        return 1
+
+    try:
+        result = nl_query(args.query_text, db_path=db_path, openai_api_key=api_key)
+    except Exception as e:
+        print(f"Query error: {e}")
+        return 1
+
+    if args.format == "json":
+        print(json.dumps(result, indent=2, default=str))
+        return 0
+
+    # Human-readable format
+    if result.get("success"):
+        print(result.get("response", "No response generated."))
+    else:
+        print(f"Query failed: {result.get('response', 'Unknown error')}")
+        return 1
+
+    return 0
+
+
 def main():
     """Main entry point."""
     # Load environment variables
@@ -340,6 +388,11 @@ Examples:
   python src/history_cli.py trends --start 2024-01-01 --end 2024-06-30 --period month
   python src/history_cli.py compare --period1 2024-01-01 2024-03-31 --period2 2024-04-01 2024-06-30
   python src/history_cli.py search "OpenAI" --start 2024-01-01
+
+  # Natural language queries (requires OpenAI API key)
+  python src/history_cli.py query "What were the top topics last month?"
+  python src/history_cli.py query "Compare Q1 vs Q2 themes"
+  python src/history_cli.py query "Find articles about OpenAI"
         """,
     )
 
@@ -439,6 +492,19 @@ Examples:
         help="Output format (default: table)"
     )
 
+    # Query command (natural language)
+    query_parser = subparsers.add_parser(
+        "query", help="Natural language query (requires OpenAI API key)"
+    )
+    query_parser.add_argument(
+        "query_text",
+        help="Natural language query (e.g., 'What were the top topics last month?')"
+    )
+    query_parser.add_argument(
+        "--format", choices=["table", "json"], default="table",
+        help="Output format (default: table)"
+    )
+
     # Parse arguments
     args = parser.parse_args()
 
@@ -459,6 +525,8 @@ Examples:
         return cmd_compare(args)
     elif args.command == "search":
         return cmd_search(args)
+    elif args.command == "query":
+        return cmd_query(args)
     else:
         parser.print_help()
         return 1
