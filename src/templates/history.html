@@ -1,0 +1,404 @@
+<!-- templates/history.html -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI News History - Query Interface</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: #f9f9f9;
+        }
+        .header-container {
+            background: linear-gradient(135deg, #6a11cb 0%, #2575fc 100%);
+            border-radius: 10px;
+            padding: 15px;
+            margin-bottom: 20px;
+            color: white;
+        }
+        .header-text {
+            color: white;
+        }
+        .ai-icon {
+            font-size: 1.5rem;
+        }
+        .chat-container {
+            background: white;
+            border-radius: 10px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+            height: calc(100vh - 280px);
+            min-height: 400px;
+            display: flex;
+            flex-direction: column;
+        }
+        .chat-messages {
+            flex: 1;
+            overflow-y: auto;
+            padding: 20px;
+        }
+        .chat-input-container {
+            padding: 15px;
+            border-top: 1px solid #eee;
+            background: #fafafa;
+            border-radius: 0 0 10px 10px;
+        }
+        .message {
+            margin-bottom: 15px;
+            padding: 12px 16px;
+            border-radius: 12px;
+            max-width: 85%;
+        }
+        .message-user {
+            background: linear-gradient(135deg, #6a11cb 0%, #2575fc 100%);
+            color: white;
+            margin-left: auto;
+        }
+        .message-assistant {
+            background: #f0f0f0;
+            color: #333;
+        }
+        .message-error {
+            background: #fee;
+            color: #c00;
+            border: 1px solid #fcc;
+        }
+        .message pre {
+            background: rgba(0,0,0,0.1);
+            padding: 10px;
+            border-radius: 6px;
+            overflow-x: auto;
+            margin: 10px 0 0 0;
+            white-space: pre-wrap;
+            word-wrap: break-word;
+        }
+        .message-assistant pre {
+            background: #e8e8e8;
+        }
+        .article-link {
+            color: #0066cc;
+            text-decoration: none;
+        }
+        .article-link:hover {
+            text-decoration: underline;
+        }
+        .stats-card {
+            background: white;
+            border-radius: 10px;
+            padding: 15px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            text-align: center;
+        }
+        .stats-number {
+            font-size: 2rem;
+            font-weight: bold;
+            color: #6a11cb;
+        }
+        .stats-label {
+            color: #666;
+            font-size: 0.9rem;
+        }
+        .quick-queries {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            margin-bottom: 15px;
+        }
+        .quick-query-btn {
+            font-size: 0.85rem;
+            padding: 6px 12px;
+            border-radius: 20px;
+            border: 1px solid #6a11cb;
+            background: white;
+            color: #6a11cb;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        .quick-query-btn:hover {
+            background: #6a11cb;
+            color: white;
+        }
+        .loading-indicator {
+            display: none;
+            text-align: center;
+            padding: 20px;
+        }
+        .loading-indicator.show {
+            display: block;
+        }
+        .spinner-border {
+            width: 1.5rem;
+            height: 1.5rem;
+        }
+        #chartContainer {
+            display: none;
+            margin-top: 15px;
+        }
+        .nav-link-custom {
+            color: white;
+            text-decoration: none;
+            padding: 5px 15px;
+            border: 1px solid rgba(255,255,255,0.5);
+            border-radius: 20px;
+            transition: all 0.2s;
+        }
+        .nav-link-custom:hover {
+            background: rgba(255,255,255,0.2);
+            color: white;
+        }
+    </style>
+</head>
+<body>
+    <div class="container py-4">
+        <header class="pb-3 mb-4">
+            <div class="header-container">
+                <div class="d-flex align-items-center justify-content-between">
+                    <h1 class="display-5 fw-bold header-text"><span class="ai-icon">📊</span> AI News History</h1>
+                    <a href="/" class="nav-link-custom">← Back to Dashboard</a>
+                </div>
+                <p class="lead header-text mt-2">Query historical news data with natural language</p>
+            </div>
+        </header>
+
+        <!-- Stats Row -->
+        <div class="row mb-4">
+            <div class="col-md-3">
+                <div class="stats-card">
+                    <div class="stats-number">{{ stats.summaries }}</div>
+                    <div class="stats-label">Summaries</div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="stats-card">
+                    <div class="stats-number">{{ stats.topics }}</div>
+                    <div class="stats-label">Topics</div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="stats-card">
+                    <div class="stats-number">{{ stats.articles }}</div>
+                    <div class="stats-label">Articles</div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="stats-card">
+                    {% if stats.date_range.earliest %}
+                    <div class="stats-number" style="font-size: 1rem;">{{ stats.date_range.earliest }}</div>
+                    <div class="stats-label">to {{ stats.date_range.latest }}</div>
+                    {% else %}
+                    <div class="stats-number">-</div>
+                    <div class="stats-label">No Data Yet</div>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+
+        <!-- Chat Interface -->
+        <div class="chat-container">
+            <div class="chat-messages" id="chatMessages">
+                <div class="message message-assistant">
+                    <strong>AI News Assistant</strong><br>
+                    Hello! I can help you explore historical AI news data. Try asking questions like:
+                    <ul class="mt-2 mb-0">
+                        <li>"What were the top topics last month?"</li>
+                        <li>"Find articles about OpenAI"</li>
+                        <li>"Compare Q3 vs Q4 trends"</li>
+                        <li>"Show me weekly trends for the past 3 months"</li>
+                    </ul>
+                </div>
+            </div>
+            <div class="loading-indicator" id="loadingIndicator">
+                <div class="spinner-border text-primary" role="status">
+                    <span class="visually-hidden">Loading...</span>
+                </div>
+                <span class="ms-2">Analyzing your query...</span>
+            </div>
+            <div class="chat-input-container">
+                <!-- Quick Query Buttons -->
+                <div class="quick-queries">
+                    <button class="quick-query-btn" onclick="sendQuery('What were the top topics last month?')">Top topics last month</button>
+                    <button class="quick-query-btn" onclick="sendQuery('Find articles about OpenAI')">OpenAI articles</button>
+                    <button class="quick-query-btn" onclick="sendQuery('Show weekly trends for the past 3 months')">Recent trends</button>
+                    <button class="quick-query-btn" onclick="sendQuery('Which topics appear most frequently?')">Frequent topics</button>
+                </div>
+                <form id="queryForm" class="d-flex gap-2">
+                    <input type="text" id="queryInput" class="form-control"
+                           placeholder="Ask a question about AI news history..."
+                           {% if not query_available %}disabled{% endif %}>
+                    <button type="submit" class="btn btn-primary"
+                            {% if not query_available %}disabled{% endif %}>
+                        Send
+                    </button>
+                </form>
+                {% if not query_available %}
+                <small class="text-muted mt-2 d-block">
+                    Natural language queries require OpenAI API key configuration.
+                    <a href="/api/trends?start=2024-01-01&end=2024-12-31&period=month">Try the REST API instead</a>.
+                </small>
+                {% endif %}
+            </div>
+        </div>
+
+        <!-- Chart Container (hidden by default) -->
+        <div id="chartContainer" class="mt-4">
+            <canvas id="trendsChart"></canvas>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        const chatMessages = document.getElementById('chatMessages');
+        const queryForm = document.getElementById('queryForm');
+        const queryInput = document.getElementById('queryInput');
+        const loadingIndicator = document.getElementById('loadingIndicator');
+        let trendsChart = null;
+
+        // Add message to chat
+        function addMessage(content, type = 'assistant') {
+            const messageDiv = document.createElement('div');
+            messageDiv.className = `message message-${type}`;
+            messageDiv.innerHTML = content;
+            chatMessages.appendChild(messageDiv);
+            chatMessages.scrollTop = chatMessages.scrollHeight;
+        }
+
+        // Format response with article links
+        function formatResponse(result) {
+            let html = result.response || 'No response generated.';
+
+            // Convert URLs to clickable links
+            html = html.replace(/(https?:\/\/[^\s]+)/g, '<a href="$1" target="_blank" class="article-link">$1</a>');
+
+            // Convert markdown-style bold
+            html = html.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+
+            // Convert newlines to <br>
+            html = html.replace(/\n/g, '<br>');
+
+            return html;
+        }
+
+        // Show/hide loading indicator
+        function setLoading(loading) {
+            loadingIndicator.className = loading ? 'loading-indicator show' : 'loading-indicator';
+            queryInput.disabled = loading;
+        }
+
+        // Send query to API
+        async function sendQuery(queryText) {
+            if (!queryText.trim()) return;
+
+            // Add user message
+            addMessage(queryText, 'user');
+            queryInput.value = '';
+
+            setLoading(true);
+
+            try {
+                const response = await fetch('/api/query', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ query: queryText })
+                });
+
+                const result = await response.json();
+
+                if (result.error) {
+                    addMessage(`Error: ${result.error}`, 'error');
+                } else if (result.success) {
+                    addMessage(formatResponse(result), 'assistant');
+
+                    // Show chart for trends data
+                    if (result.query_type === 'trends' && result.data && result.data.length > 0) {
+                        showTrendsChart(result.data);
+                    }
+                } else {
+                    addMessage(formatResponse(result), 'assistant');
+                }
+            } catch (error) {
+                addMessage(`Error: ${error.message}`, 'error');
+            } finally {
+                setLoading(false);
+            }
+        }
+
+        // Show trends chart
+        function showTrendsChart(data) {
+            const chartContainer = document.getElementById('chartContainer');
+            chartContainer.style.display = 'block';
+
+            // Group data by period
+            const periods = [...new Set(data.map(d => d.period))].sort();
+            const topics = [...new Set(data.map(d => d.topic))];
+
+            // Limit to top 5 topics for readability
+            const topTopics = topics.slice(0, 5);
+
+            // Prepare datasets
+            const datasets = topTopics.map((topic, index) => {
+                const colors = ['#6a11cb', '#2575fc', '#ff6384', '#36a2eb', '#ffce56'];
+                return {
+                    label: topic,
+                    data: periods.map(period => {
+                        const item = data.find(d => d.period === period && d.topic === topic);
+                        return item ? item.story_count : 0;
+                    }),
+                    borderColor: colors[index % colors.length],
+                    backgroundColor: colors[index % colors.length] + '40',
+                    fill: false,
+                    tension: 0.1
+                };
+            });
+
+            // Destroy existing chart
+            if (trendsChart) {
+                trendsChart.destroy();
+            }
+
+            // Create new chart
+            const ctx = document.getElementById('trendsChart').getContext('2d');
+            trendsChart = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: periods,
+                    datasets: datasets
+                },
+                options: {
+                    responsive: true,
+                    plugins: {
+                        title: {
+                            display: true,
+                            text: 'Topic Trends Over Time'
+                        },
+                        legend: {
+                            position: 'bottom'
+                        }
+                    },
+                    scales: {
+                        y: {
+                            beginAtZero: true,
+                            title: {
+                                display: true,
+                                text: 'Story Count'
+                            }
+                        }
+                    }
+                }
+            });
+        }
+
+        // Form submit handler
+        queryForm.addEventListener('submit', function(e) {
+            e.preventDefault();
+            sendQuery(queryInput.value);
+        });
+
+        // Focus input on page load
+        queryInput.focus();
+    </script>
+</body>
+</html>
