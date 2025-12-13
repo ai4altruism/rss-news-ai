@@ -24,6 +24,10 @@ from history_db import (
     get_recent_summaries,
     get_summary_by_id,
     import_json_file,
+    topic_counts_by_period,
+    top_topics_comparison,
+    topic_search,
+    get_date_range,
 )
 
 
@@ -330,3 +334,275 @@ class TestDatabaseIntegrity:
         assert get_summary_count(temp_db_path) == 2
         # Each summary has 2 topics, so 4 total
         assert get_topic_count(temp_db_path) == 4
+
+
+# =============================================================================
+# Sprint 2: Query Function Tests
+# =============================================================================
+
+class TestTopicCountsByPeriod:
+    """Tests for topic_counts_by_period function."""
+
+    def test_topic_counts_by_period_daily(self, temp_db_path, sample_summaries_multi_day):
+        """Verify daily aggregation works."""
+        init_database(temp_db_path)
+
+        for summary in sample_summaries_multi_day:
+            save_summary_to_db(summary, temp_db_path)
+
+        results = topic_counts_by_period(
+            "2024-11-01", "2024-11-30", "day", temp_db_path
+        )
+
+        assert len(results) > 0
+        # Each result should have required fields
+        for item in results:
+            assert "period" in item
+            assert "topic" in item
+            assert "story_count" in item
+            assert "articles" in item
+
+    def test_topic_counts_by_period_weekly(self, temp_db_path, sample_summaries_multi_day):
+        """Verify weekly aggregation works."""
+        init_database(temp_db_path)
+
+        for summary in sample_summaries_multi_day:
+            save_summary_to_db(summary, temp_db_path)
+
+        results = topic_counts_by_period(
+            "2024-11-01", "2024-11-30", "week", temp_db_path
+        )
+
+        assert len(results) > 0
+        # Weekly periods should have format YYYY-Www
+        for item in results:
+            assert "-W" in item["period"]
+
+    def test_topic_counts_by_period_monthly(self, temp_db_path, sample_summaries_multi_day):
+        """Verify monthly aggregation works."""
+        init_database(temp_db_path)
+
+        for summary in sample_summaries_multi_day:
+            save_summary_to_db(summary, temp_db_path)
+
+        results = topic_counts_by_period(
+            "2024-11-01", "2024-11-30", "month", temp_db_path
+        )
+
+        assert len(results) > 0
+        # Monthly periods should have format YYYY-MM
+        for item in results:
+            assert item["period"].startswith("2024-")
+            assert len(item["period"]) == 7  # YYYY-MM
+
+    def test_topic_counts_returns_articles(self, temp_db_path, sample_summaries_multi_day):
+        """Verify article URLs are included in results."""
+        init_database(temp_db_path)
+
+        for summary in sample_summaries_multi_day:
+            save_summary_to_db(summary, temp_db_path)
+
+        results = topic_counts_by_period(
+            "2024-11-01", "2024-11-30", "week", temp_db_path
+        )
+
+        # Find a result with articles
+        has_articles = any(len(r["articles"]) > 0 for r in results)
+        assert has_articles
+
+        # Articles should have title and link
+        for item in results:
+            for article in item["articles"]:
+                assert "title" in article
+                assert "link" in article
+
+    def test_topic_counts_invalid_period(self, temp_db_path):
+        """Verify invalid period returns empty list."""
+        init_database(temp_db_path)
+
+        results = topic_counts_by_period(
+            "2024-11-01", "2024-11-30", "invalid", temp_db_path
+        )
+
+        assert results == []
+
+    def test_topic_counts_empty_date_range(self, temp_db_path, sample_summary):
+        """Verify empty date range returns no results."""
+        init_database(temp_db_path)
+        save_summary_to_db(sample_summary, temp_db_path)
+
+        # Query for dates with no data
+        results = topic_counts_by_period(
+            "2020-01-01", "2020-01-31", "week", temp_db_path
+        )
+
+        assert results == []
+
+
+class TestTopTopicsComparison:
+    """Tests for top_topics_comparison function."""
+
+    def test_top_topics_comparison(self, temp_db_path, sample_summaries_multi_day):
+        """Verify period comparison works."""
+        init_database(temp_db_path)
+
+        for summary in sample_summaries_multi_day:
+            save_summary_to_db(summary, temp_db_path)
+
+        results = top_topics_comparison(
+            "2024-11-01", "2024-11-15",
+            "2024-11-16", "2024-11-30",
+            10, temp_db_path
+        )
+
+        assert "period1" in results
+        assert "period2" in results
+        assert "comparison" in results
+        assert "topics" in results["period1"]
+        assert "topics" in results["period2"]
+
+    def test_comparison_includes_common_topics(self, temp_db_path, sample_summaries_multi_day):
+        """Verify comparison identifies common topics."""
+        init_database(temp_db_path)
+
+        for summary in sample_summaries_multi_day:
+            save_summary_to_db(summary, temp_db_path)
+
+        results = top_topics_comparison(
+            "2024-11-01", "2024-11-15",
+            "2024-11-08", "2024-11-30",
+            10, temp_db_path
+        )
+
+        comp = results["comparison"]
+        assert "common_topics" in comp
+        assert "new_in_period2" in comp
+        assert "dropped_from_period1" in comp
+
+    def test_comparison_returns_articles(self, temp_db_path, sample_summaries_multi_day):
+        """Verify article URLs are included in comparison results."""
+        init_database(temp_db_path)
+
+        for summary in sample_summaries_multi_day:
+            save_summary_to_db(summary, temp_db_path)
+
+        results = top_topics_comparison(
+            "2024-11-01", "2024-11-30",
+            "2024-11-01", "2024-11-30",
+            10, temp_db_path
+        )
+
+        # Check period1 topics have articles
+        for topic in results["period1"]["topics"]:
+            assert "articles" in topic
+            for article in topic["articles"]:
+                assert "title" in article
+                assert "link" in article
+
+
+class TestTopicSearch:
+    """Tests for topic_search function."""
+
+    def test_topic_search_returns_urls(self, temp_db_path, sample_summary):
+        """Verify search results include article URLs."""
+        init_database(temp_db_path)
+        save_summary_to_db(sample_summary, temp_db_path)
+
+        results = topic_search("openai", db_path=temp_db_path)
+
+        assert len(results) > 0
+        for item in results:
+            assert "articles" in item
+            for article in item["articles"]:
+                assert "link" in article
+                assert article["link"].startswith("http")
+
+    def test_topic_search_case_insensitive(self, temp_db_path, sample_summary):
+        """Verify search is case-insensitive."""
+        init_database(temp_db_path)
+        save_summary_to_db(sample_summary, temp_db_path)
+
+        results_lower = topic_search("openai", db_path=temp_db_path)
+        results_upper = topic_search("OPENAI", db_path=temp_db_path)
+        results_mixed = topic_search("OpenAI", db_path=temp_db_path)
+
+        assert len(results_lower) == len(results_upper) == len(results_mixed)
+
+    def test_topic_search_partial_match(self, temp_db_path, sample_summary):
+        """Verify partial matching works."""
+        init_database(temp_db_path)
+        save_summary_to_db(sample_summary, temp_db_path)
+
+        results = topic_search("google", db_path=temp_db_path)
+
+        assert len(results) > 0
+        # Should match "Google AI Updates"
+        topics = [r["normalized_name"] for r in results]
+        assert any("google" in t for t in topics)
+
+    def test_topic_search_date_filtering(self, temp_db_path, sample_summaries_multi_day):
+        """Verify date range filtering works."""
+        init_database(temp_db_path)
+
+        for summary in sample_summaries_multi_day:
+            save_summary_to_db(summary, temp_db_path)
+
+        # Search with date filter
+        all_results = topic_search("ai", db_path=temp_db_path)
+        filtered_results = topic_search(
+            "ai",
+            start_date="2024-11-01",
+            end_date="2024-11-07",
+            db_path=temp_db_path
+        )
+
+        # Filtered should be subset
+        assert len(filtered_results) <= len(all_results)
+
+    def test_topic_search_no_results(self, temp_db_path, sample_summary):
+        """Verify empty results for non-matching query."""
+        init_database(temp_db_path)
+        save_summary_to_db(sample_summary, temp_db_path)
+
+        results = topic_search("nonexistent_topic_xyz", db_path=temp_db_path)
+
+        assert results == []
+
+    def test_topic_search_includes_summary_text(self, temp_db_path, sample_summary):
+        """Verify search results include summary text."""
+        init_database(temp_db_path)
+        save_summary_to_db(sample_summary, temp_db_path)
+
+        results = topic_search("openai", db_path=temp_db_path)
+
+        assert len(results) > 0
+        for item in results:
+            assert "summary_text" in item
+            assert "topic_name" in item
+            assert "generated_at" in item
+
+
+class TestGetDateRange:
+    """Tests for get_date_range function."""
+
+    def test_get_date_range(self, temp_db_path, sample_summaries_multi_day):
+        """Verify date range retrieval."""
+        init_database(temp_db_path)
+
+        for summary in sample_summaries_multi_day:
+            save_summary_to_db(summary, temp_db_path)
+
+        date_range = get_date_range(temp_db_path)
+
+        assert date_range["earliest"] is not None
+        assert date_range["latest"] is not None
+        assert date_range["earliest"] <= date_range["latest"]
+
+    def test_get_date_range_empty_db(self, temp_db_path):
+        """Verify date range for empty database."""
+        init_database(temp_db_path)
+
+        date_range = get_date_range(temp_db_path)
+
+        assert date_range["earliest"] is None
+        assert date_range["latest"] is None

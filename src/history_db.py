@@ -386,3 +386,289 @@ def import_json_file(filepath: str, db_path: Optional[str] = None) -> Optional[i
     except Exception as e:
         logging.error(f"Failed to import {filepath}: {e}")
         return None
+
+
+# =============================================================================
+# Query Functions (Sprint 2)
+# =============================================================================
+
+def topic_counts_by_period(
+    start_date: str,
+    end_date: str,
+    period: str = "week",
+    db_path: Optional[str] = None
+) -> List[Dict[str, Any]]:
+    """
+    Count stories by topic over a time period.
+
+    Parameters:
+        start_date: Start date (ISO format: YYYY-MM-DD)
+        end_date: End date (ISO format: YYYY-MM-DD)
+        period: Aggregation period - 'day', 'week', or 'month'
+        db_path: Path to database file.
+
+    Returns:
+        List of dicts with period, topic, story_count, and articles.
+    """
+    # SQLite strftime format for period grouping
+    period_formats = {
+        "day": "%Y-%m-%d",
+        "week": "%Y-W%W",
+        "month": "%Y-%m"
+    }
+
+    if period not in period_formats:
+        logging.error(f"Invalid period: {period}. Use 'day', 'week', or 'month'")
+        return []
+
+    period_format = period_formats[period]
+
+    try:
+        with get_db_connection(db_path, readonly=True) as conn:
+            # Get topic counts grouped by period
+            cursor = conn.execute(
+                f"""SELECT
+                        strftime('{period_format}', s.generated_at) as period,
+                        t.normalized_name as topic,
+                        COUNT(DISTINCT t.id) as story_count,
+                        SUM(t.article_count) as article_count
+                    FROM topics t
+                    JOIN summaries s ON t.summary_id = s.id
+                    WHERE date(s.generated_at) BETWEEN date(?) AND date(?)
+                    GROUP BY period, t.normalized_name
+                    ORDER BY period, story_count DESC""",
+                (start_date, end_date)
+            )
+
+            results = []
+            for row in cursor.fetchall():
+                # Get sample articles for this topic in this period
+                article_cursor = conn.execute(
+                    f"""SELECT DISTINCT a.title, a.link
+                        FROM articles a
+                        JOIN topics t ON a.topic_id = t.id
+                        JOIN summaries s ON t.summary_id = s.id
+                        WHERE t.normalized_name = ?
+                          AND strftime('{period_format}', s.generated_at) = ?
+                        LIMIT 5""",
+                    (row["topic"], row["period"])
+                )
+                articles = [dict(a) for a in article_cursor.fetchall()]
+
+                results.append({
+                    "period": row["period"],
+                    "topic": row["topic"],
+                    "story_count": row["story_count"],
+                    "article_count": row["article_count"],
+                    "articles": articles
+                })
+
+            return results
+
+    except Exception as e:
+        logging.error(f"Failed to get topic counts by period: {e}")
+        return []
+
+
+def top_topics_comparison(
+    period1_start: str,
+    period1_end: str,
+    period2_start: str,
+    period2_end: str,
+    limit: int = 10,
+    db_path: Optional[str] = None
+) -> Dict[str, Any]:
+    """
+    Compare top topics between two time periods.
+
+    Parameters:
+        period1_start: Start date of first period (ISO format)
+        period1_end: End date of first period (ISO format)
+        period2_start: Start date of second period (ISO format)
+        period2_end: End date of second period (ISO format)
+        limit: Number of top topics to return per period
+        db_path: Path to database file.
+
+    Returns:
+        Dict with period1_topics, period2_topics, and comparison stats.
+    """
+    def get_top_topics(conn, start, end, limit):
+        cursor = conn.execute(
+            """SELECT
+                    t.normalized_name as topic,
+                    COUNT(DISTINCT t.id) as story_count,
+                    SUM(t.article_count) as article_count
+                FROM topics t
+                JOIN summaries s ON t.summary_id = s.id
+                WHERE date(s.generated_at) BETWEEN date(?) AND date(?)
+                GROUP BY t.normalized_name
+                ORDER BY story_count DESC
+                LIMIT ?""",
+            (start, end, limit)
+        )
+        results = []
+        for row in cursor.fetchall():
+            # Get sample articles
+            article_cursor = conn.execute(
+                """SELECT DISTINCT a.title, a.link
+                    FROM articles a
+                    JOIN topics t ON a.topic_id = t.id
+                    JOIN summaries s ON t.summary_id = s.id
+                    WHERE t.normalized_name = ?
+                      AND date(s.generated_at) BETWEEN date(?) AND date(?)
+                    LIMIT 3""",
+                (row["topic"], start, end)
+            )
+            articles = [dict(a) for a in article_cursor.fetchall()]
+
+            results.append({
+                "topic": row["topic"],
+                "story_count": row["story_count"],
+                "article_count": row["article_count"],
+                "articles": articles
+            })
+        return results
+
+    try:
+        with get_db_connection(db_path, readonly=True) as conn:
+            period1_topics = get_top_topics(conn, period1_start, period1_end, limit)
+            period2_topics = get_top_topics(conn, period2_start, period2_end, limit)
+
+            # Calculate comparison stats
+            p1_topic_names = {t["topic"] for t in period1_topics}
+            p2_topic_names = {t["topic"] for t in period2_topics}
+
+            common_topics = p1_topic_names & p2_topic_names
+            new_in_p2 = p2_topic_names - p1_topic_names
+            dropped_from_p1 = p1_topic_names - p2_topic_names
+
+            return {
+                "period1": {
+                    "start": period1_start,
+                    "end": period1_end,
+                    "topics": period1_topics
+                },
+                "period2": {
+                    "start": period2_start,
+                    "end": period2_end,
+                    "topics": period2_topics
+                },
+                "comparison": {
+                    "common_topics": list(common_topics),
+                    "new_in_period2": list(new_in_p2),
+                    "dropped_from_period1": list(dropped_from_p1)
+                }
+            }
+
+    except Exception as e:
+        logging.error(f"Failed to compare topics: {e}")
+        return {"period1": {"topics": []}, "period2": {"topics": []}, "comparison": {}}
+
+
+def topic_search(
+    query: str,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    limit: int = 50,
+    db_path: Optional[str] = None
+) -> List[Dict[str, Any]]:
+    """
+    Search for topics by name with optional date filtering.
+
+    Parameters:
+        query: Search string (case-insensitive, partial match)
+        start_date: Optional start date filter (ISO format)
+        end_date: Optional end date filter (ISO format)
+        limit: Maximum number of results
+        db_path: Path to database file.
+
+    Returns:
+        List of matching topics with their articles.
+    """
+    try:
+        with get_db_connection(db_path, readonly=True) as conn:
+            # Build query with optional date filters
+            sql = """SELECT
+                        t.id,
+                        t.name as topic_name,
+                        t.normalized_name,
+                        t.summary_text,
+                        t.article_count,
+                        s.generated_at,
+                        s.id as summary_id
+                    FROM topics t
+                    JOIN summaries s ON t.summary_id = s.id
+                    WHERE t.normalized_name LIKE ?"""
+
+            params = [f"%{query.lower()}%"]
+
+            if start_date:
+                sql += " AND date(s.generated_at) >= date(?)"
+                params.append(start_date)
+
+            if end_date:
+                sql += " AND date(s.generated_at) <= date(?)"
+                params.append(end_date)
+
+            sql += " ORDER BY s.generated_at DESC LIMIT ?"
+            params.append(limit)
+
+            cursor = conn.execute(sql, params)
+
+            results = []
+            for row in cursor.fetchall():
+                # Get articles for this topic
+                article_cursor = conn.execute(
+                    """SELECT title, link, source, published_date
+                        FROM articles
+                        WHERE topic_id = ?""",
+                    (row["id"],)
+                )
+                articles = [dict(a) for a in article_cursor.fetchall()]
+
+                results.append({
+                    "topic_name": row["topic_name"],
+                    "normalized_name": row["normalized_name"],
+                    "summary_text": row["summary_text"],
+                    "article_count": row["article_count"],
+                    "generated_at": row["generated_at"],
+                    "summary_id": row["summary_id"],
+                    "articles": articles
+                })
+
+            return results
+
+    except Exception as e:
+        logging.error(f"Failed to search topics: {e}")
+        return []
+
+
+def get_date_range(db_path: Optional[str] = None) -> Dict[str, Optional[str]]:
+    """
+    Get the date range of data in the database.
+
+    Parameters:
+        db_path: Path to database file.
+
+    Returns:
+        Dict with 'earliest' and 'latest' dates, or None if no data.
+    """
+    try:
+        with get_db_connection(db_path, readonly=True) as conn:
+            cursor = conn.execute(
+                """SELECT
+                        MIN(date(generated_at)) as earliest,
+                        MAX(date(generated_at)) as latest
+                    FROM summaries"""
+            )
+            row = cursor.fetchone()
+            if row:
+                return {
+                    "earliest": row["earliest"],
+                    "latest": row["latest"]
+                }
+            return {"earliest": None, "latest": None}
+
+    except Exception as e:
+        logging.error(f"Failed to get date range: {e}")
+        return {"earliest": None, "latest": None}
