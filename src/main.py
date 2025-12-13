@@ -28,6 +28,12 @@ except ImportError:
     save_summary = None
     run_dashboard = None
 
+try:
+    from history_db import save_summary_to_db, init_database
+except ImportError:
+    save_summary_to_db = None
+    init_database = None
+
 
 def parse_arguments():
     """Parse command line arguments."""
@@ -148,6 +154,17 @@ def main():
     summary = group_and_summarize(
         filtered_articles, group_model, summarize_model, openai_api_key
     )
+
+    # Save to historical database (non-fatal if it fails)
+    if save_summary_to_db:
+        try:
+            summary_id = save_summary_to_db(summary)
+            if summary_id:
+                logger.info(f"Summary saved to historical database (ID: {summary_id})")
+            else:
+                logger.warning("Failed to save summary to historical database")
+        except Exception as e:
+            logger.warning(f"Could not save to historical database: {e}")
 
     # Mark articles as published only if successfully processed and history tracking is enabled
     if filtered_articles and not args.ignore_history:
