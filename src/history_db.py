@@ -672,3 +672,354 @@ def get_date_range(db_path: Optional[str] = None) -> Dict[str, Optional[str]]:
     except Exception as e:
         logging.error(f"Failed to get date range: {e}")
         return {"earliest": None, "latest": None}
+
+
+# =============================================================================
+# Topic Alias Management (Sprint 5)
+# =============================================================================
+
+def add_topic_alias(alias: str, canonical_name: str, db_path: Optional[str] = None) -> bool:
+    """
+    Add a topic alias mapping.
+
+    Parameters:
+        alias: The alias name (will be normalized).
+        canonical_name: The canonical name to map to (will be normalized).
+        db_path: Path to database file.
+
+    Returns:
+        True if successful, False otherwise.
+    """
+    normalized_alias = normalize_topic_name(alias)
+    normalized_canonical = normalize_topic_name(canonical_name)
+
+    if normalized_alias == normalized_canonical:
+        logging.warning("Alias and canonical name are the same after normalization")
+        return False
+
+    try:
+        with get_db_connection(db_path) as conn:
+            conn.execute(
+                """INSERT OR REPLACE INTO topic_aliases (canonical_name, alias)
+                   VALUES (?, ?)""",
+                (normalized_canonical, normalized_alias)
+            )
+            conn.commit()
+            logging.info(f"Added alias: '{alias}' -> '{canonical_name}'")
+            return True
+
+    except Exception as e:
+        logging.error(f"Failed to add topic alias: {e}")
+        return False
+
+
+def remove_topic_alias(alias: str, db_path: Optional[str] = None) -> bool:
+    """
+    Remove a topic alias.
+
+    Parameters:
+        alias: The alias to remove.
+        db_path: Path to database file.
+
+    Returns:
+        True if removed, False if not found or error.
+    """
+    normalized_alias = normalize_topic_name(alias)
+
+    try:
+        with get_db_connection(db_path) as conn:
+            cursor = conn.execute(
+                "DELETE FROM topic_aliases WHERE alias = ?",
+                (normalized_alias,)
+            )
+            conn.commit()
+            if cursor.rowcount > 0:
+                logging.info(f"Removed alias: '{alias}'")
+                return True
+            else:
+                logging.warning(f"Alias not found: '{alias}'")
+                return False
+
+    except Exception as e:
+        logging.error(f"Failed to remove topic alias: {e}")
+        return False
+
+
+def list_topic_aliases(db_path: Optional[str] = None) -> List[Dict[str, str]]:
+    """
+    List all topic aliases.
+
+    Parameters:
+        db_path: Path to database file.
+
+    Returns:
+        List of dicts with 'alias' and 'canonical_name'.
+    """
+    try:
+        with get_db_connection(db_path, readonly=True) as conn:
+            cursor = conn.execute(
+                """SELECT alias, canonical_name, created_at
+                   FROM topic_aliases
+                   ORDER BY canonical_name, alias"""
+            )
+            return [dict(row) for row in cursor.fetchall()]
+
+    except Exception as e:
+        logging.error(f"Failed to list topic aliases: {e}")
+        return []
+
+
+def get_unique_topics(db_path: Optional[str] = None) -> List[Dict[str, Any]]:
+    """
+    Get list of unique normalized topic names with counts.
+
+    Parameters:
+        db_path: Path to database file.
+
+    Returns:
+        List of dicts with 'normalized_name', 'count', and 'sample_names'.
+    """
+    try:
+        with get_db_connection(db_path, readonly=True) as conn:
+            cursor = conn.execute(
+                """SELECT
+                        normalized_name,
+                        COUNT(*) as count,
+                        GROUP_CONCAT(name, ' | ') as sample_names
+                   FROM topics
+                   GROUP BY normalized_name
+                   ORDER BY count DESC"""
+            )
+            return [dict(row) for row in cursor.fetchall()]
+
+    except Exception as e:
+        logging.error(f"Failed to get unique topics: {e}")
+        return []
+
+
+# =============================================================================
+# Export Functions (Sprint 5)
+# =============================================================================
+
+def export_topics_csv(
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    db_path: Optional[str] = None
+) -> str:
+    """
+    Export topics data as CSV.
+
+    Parameters:
+        start_date: Optional start date filter (YYYY-MM-DD).
+        end_date: Optional end date filter (YYYY-MM-DD).
+        db_path: Path to database file.
+
+    Returns:
+        CSV string with headers.
+    """
+    try:
+        with get_db_connection(db_path, readonly=True) as conn:
+            sql = """SELECT
+                        date(s.generated_at) as date,
+                        t.name as topic,
+                        t.normalized_name,
+                        t.summary_text,
+                        t.article_count,
+                        GROUP_CONCAT(a.title, ' | ') as article_titles,
+                        GROUP_CONCAT(a.link, ' | ') as article_links
+                    FROM topics t
+                    JOIN summaries s ON t.summary_id = s.id
+                    LEFT JOIN articles a ON t.id = a.topic_id
+                    WHERE 1=1"""
+
+            params = []
+            if start_date:
+                sql += " AND date(s.generated_at) >= date(?)"
+                params.append(start_date)
+            if end_date:
+                sql += " AND date(s.generated_at) <= date(?)"
+                params.append(end_date)
+
+            sql += " GROUP BY t.id ORDER BY s.generated_at DESC, t.name"
+
+            cursor = conn.execute(sql, params)
+            rows = cursor.fetchall()
+
+            # Build CSV
+            import csv
+            import io
+
+            output = io.StringIO()
+            writer = csv.writer(output)
+
+            # Header
+            writer.writerow([
+                'date', 'topic', 'normalized_name', 'summary',
+                'article_count', 'article_titles', 'article_links'
+            ])
+
+            # Data rows
+            for row in rows:
+                writer.writerow([
+                    row['date'],
+                    row['topic'],
+                    row['normalized_name'],
+                    row['summary_text'] or '',
+                    row['article_count'],
+                    row['article_titles'] or '',
+                    row['article_links'] or ''
+                ])
+
+            return output.getvalue()
+
+    except Exception as e:
+        logging.error(f"Failed to export CSV: {e}")
+        return ""
+
+
+def export_articles_csv(
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    db_path: Optional[str] = None
+) -> str:
+    """
+    Export all articles as CSV.
+
+    Parameters:
+        start_date: Optional start date filter (YYYY-MM-DD).
+        end_date: Optional end date filter (YYYY-MM-DD).
+        db_path: Path to database file.
+
+    Returns:
+        CSV string with headers.
+    """
+    try:
+        with get_db_connection(db_path, readonly=True) as conn:
+            sql = """SELECT
+                        date(s.generated_at) as date,
+                        t.name as topic,
+                        a.title,
+                        a.link,
+                        a.source,
+                        a.published_date
+                    FROM articles a
+                    JOIN topics t ON a.topic_id = t.id
+                    JOIN summaries s ON t.summary_id = s.id
+                    WHERE 1=1"""
+
+            params = []
+            if start_date:
+                sql += " AND date(s.generated_at) >= date(?)"
+                params.append(start_date)
+            if end_date:
+                sql += " AND date(s.generated_at) <= date(?)"
+                params.append(end_date)
+
+            sql += " ORDER BY s.generated_at DESC, t.name, a.title"
+
+            cursor = conn.execute(sql, params)
+            rows = cursor.fetchall()
+
+            # Build CSV
+            import csv
+            import io
+
+            output = io.StringIO()
+            writer = csv.writer(output)
+
+            # Header
+            writer.writerow([
+                'date', 'topic', 'title', 'link', 'source', 'published_date'
+            ])
+
+            # Data rows
+            for row in rows:
+                writer.writerow([
+                    row['date'],
+                    row['topic'],
+                    row['title'],
+                    row['link'],
+                    row['source'] or '',
+                    row['published_date'] or ''
+                ])
+
+            return output.getvalue()
+
+    except Exception as e:
+        logging.error(f"Failed to export articles CSV: {e}")
+        return ""
+
+
+def export_data_json(
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    db_path: Optional[str] = None
+) -> Dict[str, Any]:
+    """
+    Export all data as JSON.
+
+    Parameters:
+        start_date: Optional start date filter (YYYY-MM-DD).
+        end_date: Optional end date filter (YYYY-MM-DD).
+        db_path: Path to database file.
+
+    Returns:
+        Dict with 'summaries', 'topics', 'articles', and 'metadata'.
+    """
+    try:
+        with get_db_connection(db_path, readonly=True) as conn:
+            # Build date filter
+            date_filter = ""
+            params = []
+            if start_date:
+                date_filter += " AND date(s.generated_at) >= date(?)"
+                params.append(start_date)
+            if end_date:
+                date_filter += " AND date(s.generated_at) <= date(?)"
+                params.append(end_date)
+
+            # Get summaries
+            summaries_sql = f"""SELECT id, generated_at, created_at
+                               FROM summaries s
+                               WHERE 1=1 {date_filter}
+                               ORDER BY generated_at DESC"""
+            cursor = conn.execute(summaries_sql, params)
+            summaries = [dict(row) for row in cursor.fetchall()]
+
+            # Get topics with articles
+            topics_sql = f"""SELECT
+                                t.id, t.summary_id, t.name, t.normalized_name,
+                                t.summary_text, t.article_count,
+                                s.generated_at
+                            FROM topics t
+                            JOIN summaries s ON t.summary_id = s.id
+                            WHERE 1=1 {date_filter}
+                            ORDER BY s.generated_at DESC, t.name"""
+            cursor = conn.execute(topics_sql, params)
+            topics = []
+            for row in cursor.fetchall():
+                topic = dict(row)
+                # Get articles for this topic
+                article_cursor = conn.execute(
+                    """SELECT title, link, source, published_date
+                       FROM articles WHERE topic_id = ?""",
+                    (topic['id'],)
+                )
+                topic['articles'] = [dict(a) for a in article_cursor.fetchall()]
+                topics.append(topic)
+
+            return {
+                "metadata": {
+                    "exported_at": datetime.now().isoformat(),
+                    "start_date": start_date,
+                    "end_date": end_date,
+                    "summary_count": len(summaries),
+                    "topic_count": len(topics)
+                },
+                "summaries": summaries,
+                "topics": topics
+            }
+
+    except Exception as e:
+        logging.error(f"Failed to export JSON: {e}")
+        return {"error": str(e)}

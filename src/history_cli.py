@@ -26,6 +26,13 @@ from history_db import (
     topic_counts_by_period,
     top_topics_comparison,
     topic_search,
+    add_topic_alias,
+    remove_topic_alias,
+    list_topic_aliases,
+    get_unique_topics,
+    export_topics_csv,
+    export_articles_csv,
+    export_data_json,
 )
 
 # Import query engine (optional - may not be available without API key)
@@ -368,6 +375,128 @@ def cmd_query(args):
     return 0
 
 
+def cmd_alias(args):
+    """Manage topic aliases."""
+    db_path = args.db_path or get_db_path()
+
+    if not os.path.exists(db_path):
+        print(f"Database not found at {db_path}. Run 'init' first.")
+        return 1
+
+    # Handle subcommands
+    if args.alias_action == "add":
+        if not args.alias_name or not args.canonical:
+            print("Both --alias and --canonical are required for 'add'")
+            return 1
+        success = add_topic_alias(args.alias_name, args.canonical, db_path)
+        if success:
+            print(f"Added alias: '{args.alias_name}' -> '{args.canonical}'")
+            return 0
+        else:
+            print("Failed to add alias")
+            return 1
+
+    elif args.alias_action == "remove":
+        if not args.alias_name:
+            print("--alias is required for 'remove'")
+            return 1
+        success = remove_topic_alias(args.alias_name, db_path)
+        if success:
+            print(f"Removed alias: '{args.alias_name}'")
+            return 0
+        else:
+            print(f"Alias not found: '{args.alias_name}'")
+            return 1
+
+    elif args.alias_action == "list":
+        aliases = list_topic_aliases(db_path)
+        if args.format == "json":
+            print(json.dumps(aliases, indent=2))
+            return 0
+
+        if not aliases:
+            print("No aliases defined.")
+            return 0
+
+        print("\nTopic Aliases")
+        print("=" * 50)
+        headers = ["Alias", "Canonical Name"]
+        rows = [(a["alias"], a["canonical_name"]) for a in aliases]
+        print(format_table(headers, rows))
+        print(f"\nTotal: {len(aliases)} aliases")
+        return 0
+
+    elif args.alias_action == "topics":
+        topics = get_unique_topics(db_path)
+        if args.format == "json":
+            print(json.dumps(topics, indent=2))
+            return 0
+
+        if not topics:
+            print("No topics in database.")
+            return 0
+
+        print("\nUnique Topics (candidates for aliasing)")
+        print("=" * 60)
+        headers = ["Topic", "Count", "Variations"]
+        rows = [(t["normalized_name"], t["count"], truncate(t["sample_names"], 40))
+                for t in topics[:50]]
+        print(format_table(headers, rows))
+        if len(topics) > 50:
+            print(f"\n... and {len(topics) - 50} more topics")
+        return 0
+
+    else:
+        print("Unknown alias action. Use: add, remove, list, or topics")
+        return 1
+
+
+def cmd_export(args):
+    """Export data to CSV or JSON."""
+    db_path = args.db_path or get_db_path()
+
+    if not os.path.exists(db_path):
+        print(f"Database not found at {db_path}. Run 'init' first.")
+        return 1
+
+    export_type = args.export_type
+
+    if export_type == "topics":
+        csv_data = export_topics_csv(args.start, args.end, db_path)
+        if args.output:
+            with open(args.output, 'w') as f:
+                f.write(csv_data)
+            print(f"Exported topics to {args.output}")
+        else:
+            print(csv_data)
+        return 0
+
+    elif export_type == "articles":
+        csv_data = export_articles_csv(args.start, args.end, db_path)
+        if args.output:
+            with open(args.output, 'w') as f:
+                f.write(csv_data)
+            print(f"Exported articles to {args.output}")
+        else:
+            print(csv_data)
+        return 0
+
+    elif export_type == "json":
+        json_data = export_data_json(args.start, args.end, db_path)
+        output_str = json.dumps(json_data, indent=2, default=str)
+        if args.output:
+            with open(args.output, 'w') as f:
+                f.write(output_str)
+            print(f"Exported data to {args.output}")
+        else:
+            print(output_str)
+        return 0
+
+    else:
+        print("Unknown export type. Use: topics, articles, or json")
+        return 1
+
+
 def main():
     """Main entry point."""
     # Load environment variables
@@ -392,7 +521,17 @@ Examples:
   # Natural language queries (requires OpenAI API key)
   python src/history_cli.py query "What were the top topics last month?"
   python src/history_cli.py query "Compare Q1 vs Q2 themes"
-  python src/history_cli.py query "Find articles about OpenAI"
+
+  # Topic alias management
+  python src/history_cli.py alias topics                    # List unique topics
+  python src/history_cli.py alias list                      # List existing aliases
+  python src/history_cli.py alias add --alias "gpt" --canonical "openai"
+  python src/history_cli.py alias remove --alias "gpt"
+
+  # Data export
+  python src/history_cli.py export topics -o topics.csv     # Export topics to CSV
+  python src/history_cli.py export articles -o articles.csv # Export articles to CSV
+  python src/history_cli.py export json -o backup.json      # Full JSON export
         """,
     )
 
@@ -505,6 +644,50 @@ Examples:
         help="Output format (default: table)"
     )
 
+    # Alias command
+    alias_parser = subparsers.add_parser(
+        "alias", help="Manage topic aliases"
+    )
+    alias_parser.add_argument(
+        "alias_action",
+        choices=["add", "remove", "list", "topics"],
+        help="Action: add, remove, list aliases, or list unique topics"
+    )
+    alias_parser.add_argument(
+        "--alias", dest="alias_name",
+        help="Alias name (for add/remove)"
+    )
+    alias_parser.add_argument(
+        "--canonical",
+        help="Canonical name to map alias to (for add)"
+    )
+    alias_parser.add_argument(
+        "--format", choices=["table", "json"], default="table",
+        help="Output format (default: table)"
+    )
+
+    # Export command
+    export_parser = subparsers.add_parser(
+        "export", help="Export data to CSV or JSON"
+    )
+    export_parser.add_argument(
+        "export_type",
+        choices=["topics", "articles", "json"],
+        help="Export type: topics (CSV), articles (CSV), or json (full export)"
+    )
+    export_parser.add_argument(
+        "--start",
+        help="Filter by start date (YYYY-MM-DD)"
+    )
+    export_parser.add_argument(
+        "--end",
+        help="Filter by end date (YYYY-MM-DD)"
+    )
+    export_parser.add_argument(
+        "-o", "--output",
+        help="Output file path (default: stdout)"
+    )
+
     # Parse arguments
     args = parser.parse_args()
 
@@ -527,6 +710,10 @@ Examples:
         return cmd_search(args)
     elif args.command == "query":
         return cmd_query(args)
+    elif args.command == "alias":
+        return cmd_alias(args)
+    elif args.command == "export":
+        return cmd_export(args)
     else:
         parser.print_help()
         return 1

@@ -16,6 +16,11 @@ A Python-based application that monitors RSS feeds for generative AI news, filte
 - **Deduplication**: Prevents the same stories from appearing repeatedly
 - **History Management**: Maintains a configurable article history to avoid duplicates
 - **Scheduled Processing**: Can run as a daemon to periodically check for new content
+- **Historical Database**: SQLite storage for trend analysis and historical queries
+- **Natural Language Queries**: Ask questions about historical data using LLM
+- **Topic Aliases**: Normalize topic variations (e.g., "OpenAI News" → "OpenAI")
+- **Data Export**: Export topics and articles to CSV or JSON formats
+- **REST API**: Programmatic access to trends, comparisons, and search
 
 ## Installation
 
@@ -137,6 +142,144 @@ SMTP_USE_TLS=True
 EMAIL_RECIPIENTS=recipient1@example.com,recipient2@example.com
 ```
 
+## Historical Database & Query System
+
+The application maintains a SQLite database of all summaries, topics, and articles for trend analysis and historical queries.
+
+### History CLI Commands
+
+```bash
+# Initialize the database
+python src/history_cli.py init
+
+# Import existing JSON summary files
+python src/history_cli.py import data/*.json
+
+# Natural language query (requires OpenAI API key)
+python src/history_cli.py query "What were the top AI themes last month?"
+
+# Trend analysis
+python src/history_cli.py trends --start 2024-06-01 --end 2024-12-01 --period month
+
+# Compare two time periods
+python src/history_cli.py compare --period1 2024-01-01 2024-03-31 \
+                                  --period2 2024-04-01 2024-06-30
+
+# Search for topics
+python src/history_cli.py search "OpenAI" --start 2024-01-01 --end 2024-12-31
+
+# View recent summaries
+python src/history_cli.py recent --limit 5
+
+# Database statistics
+python src/history_cli.py stats
+```
+
+### Topic Alias Management
+
+Normalize topic name variations across summaries:
+
+```bash
+# Add an alias (maps "OpenAI News" → "OpenAI")
+python src/history_cli.py alias add "OpenAI News" "OpenAI"
+
+# List all aliases
+python src/history_cli.py alias list
+
+# View unique topics in database
+python src/history_cli.py alias topics
+
+# Remove an alias
+python src/history_cli.py alias remove "OpenAI News"
+```
+
+### Data Export
+
+Export historical data for external analysis or backup:
+
+```bash
+# Export topics to CSV
+python src/history_cli.py export topics --output topics.csv
+
+# Export articles to CSV with date filter
+python src/history_cli.py export articles --start 2024-01-01 --end 2024-06-30 --output articles.csv
+
+# Export all data to JSON
+python src/history_cli.py export json --output backup.json
+```
+
+### Web API Endpoints
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/history` | GET | Interactive query interface page |
+| `/api/history/stats` | GET | Database statistics |
+| `/api/trends` | GET | Topic trends over time |
+| `/api/compare` | GET | Compare top topics between periods |
+| `/api/topics` | GET | Search topics by name |
+| `/api/query` | POST | Natural language query |
+
+Example API usage:
+
+```bash
+# Get database statistics
+curl http://localhost:5002/api/history/stats
+
+# Get topic trends
+curl "http://localhost:5002/api/trends?start=2024-01-01&end=2024-12-31&period=month"
+
+# Compare two periods
+curl "http://localhost:5002/api/compare?p1_start=2024-01-01&p1_end=2024-03-31&p2_start=2024-04-01&p2_end=2024-06-30"
+
+# Search topics
+curl "http://localhost:5002/api/topics?search=OpenAI&limit=10"
+
+# Natural language query
+curl -X POST http://localhost:5002/api/query \
+  -H "Content-Type: application/json" \
+  -d '{"query": "What were the top topics last month?"}'
+```
+
+## Docker Deployment
+
+### Build the Image
+
+```bash
+docker build -t rss-news-ai .
+```
+
+### Run with Volume Mounts
+
+For production, mount the data and logs directories as volumes to persist the database outside the container:
+
+```bash
+# Create host directories
+mkdir -p /var/lib/rss-news-ai/data
+mkdir -p /var/lib/rss-news-ai/logs
+
+# Run container with volumes
+docker run -d \
+  --name rss-news-ai \
+  -v /var/lib/rss-news-ai/data:/app/data \
+  -v /var/lib/rss-news-ai/logs:/app/logs \
+  -p 5002:5002 \
+  --env-file .env \
+  rss-news-ai --output slack web
+```
+
+### Access Database from Host
+
+```bash
+# View database
+sqlite3 /var/lib/rss-news-ai/data/history.db
+
+# Backup database
+cp /var/lib/rss-news-ai/data/history.db /backup/history_$(date +%Y%m%d).db
+
+# Monitor size
+ls -lh /var/lib/rss-news-ai/data/history.db
+```
+
 ## 📁 Architecture
 
 The application consists of several modules:
@@ -146,7 +289,10 @@ The application consists of several modules:
 - `llm_filter.py` - Uses LLM to filter relevant articles
 - `summarizer.py` - Groups and summarizes articles by topic
 - `article_history.py` - Manages the history of processed articles
-- `web_dashboard.py` - Web interface for viewing results
+- `history_db.py` - SQLite database for historical storage and queries
+- `query_engine.py` - LLM-powered natural language query processing
+- `history_cli.py` - Command-line interface for historical queries
+- `web_dashboard.py` - Web interface for viewing results and history
 - `slack_publisher.py` - Publishes results to Slack
 - `email_reporter.py` - Sends results via email
 - `scheduler.py` - Runs the application at scheduled intervals
