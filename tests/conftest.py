@@ -10,6 +10,10 @@ import tempfile
 import pytest
 from datetime import datetime, timedelta
 
+# Set TESTING mode before importing any application modules
+# This disables HTTPS enforcement and other production-only features
+os.environ['TESTING'] = 'true'
+
 # Add src directory to path for imports
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 

@@ -356,6 +356,109 @@ Each sprint follows this workflow:
 
 ---
 
+## Sprint 6: Security Hardening
+
+**Goal**: Secure all exposed endpoints and harden the application for production deployment
+
+**Stories**:
+
+1. **API Authentication** (High Priority)
+   - Add API key authentication for all `/api/*` endpoints
+   - Generate and manage API keys via environment variable `API_SECRET_KEY`
+   - Return 401 Unauthorized for missing/invalid keys
+   - Exclude public pages (`/`, `/history`) from auth requirement
+
+2. **Rate Limiting** (High Priority)
+   - Add Flask-Limiter for request throttling
+   - Configure limits: 100 requests/minute for API, 10/minute for `/api/query` (LLM)
+   - Return 429 Too Many Requests when exceeded
+   - Add `RATE_LIMIT_ENABLED` env var to disable in development
+
+3. **Security Headers** (High Priority)
+   - Add Flask-Talisman for security headers
+   - Content-Security-Policy (CSP)
+   - X-Frame-Options (prevent clickjacking)
+   - X-Content-Type-Options
+   - Strict-Transport-Security (HTTPS)
+   - Configure CSP to allow Chart.js and Bootstrap CDN
+
+4. **Input Validation** (Medium Priority)
+   - Add maximum length limits on all query parameters (1000 chars)
+   - Strict date format validation (YYYY-MM-DD regex)
+   - Sanitize search terms before use
+   - Validate `limit` parameters (max 1000)
+
+5. **LLM Prompt Injection Mitigation** (Medium Priority)
+   - Sanitize user queries before including in prompts
+   - Add input length limits (500 chars for natural language queries)
+   - Add prompt guardrails to detect manipulation attempts
+   - Log suspicious query patterns
+
+6. **Error Handling** (Medium Priority)
+   - Generic error messages for production (hide internal details)
+   - Add `DEBUG` mode toggle for detailed errors in development
+   - Structured error responses with error codes
+
+7. **CORS Configuration** (Low Priority)
+   - Add Flask-CORS with configurable allowed origins
+   - Default to same-origin only
+   - Add `CORS_ORIGINS` env var for allowed domains
+
+8. **Audit Logging** (Low Priority)
+   - Log all API requests with timestamp, IP, endpoint, user-agent
+   - Log failed authentication attempts
+   - Log rate limit violations
+   - Separate security log file
+
+### Testing (Sprint 6)
+
+**File**: `tests/test_security.py`
+
+| Test Name | Description |
+|-----------|-------------|
+| `test_api_requires_auth()` | Endpoints return 401 without key |
+| `test_api_accepts_valid_key()` | Endpoints work with valid key |
+| `test_api_rejects_invalid_key()` | Endpoints return 401 with bad key |
+| `test_rate_limiting_enforced()` | Returns 429 after limit exceeded |
+| `test_rate_limiting_resets()` | Limit resets after window |
+| `test_security_headers_present()` | CSP, X-Frame-Options, etc. |
+| `test_input_length_validation()` | Rejects oversized inputs |
+| `test_date_format_validation()` | Rejects invalid dates |
+| `test_query_length_limit()` | Rejects long NL queries |
+| `test_error_messages_generic()` | No stack traces in production |
+| `test_cors_same_origin_default()` | Cross-origin blocked by default |
+
+**Run Tests**: `pytest tests/test_security.py -v`
+
+**Git**: Branch `feature/sprint-6-security-hardening`
+
+**New Dependencies** (add to requirements.txt):
+```
+Flask-Limiter>=3.5.0
+Flask-Talisman>=1.1.0
+Flask-CORS>=4.0.0
+```
+
+**New Environment Variables** (add to .env.example):
+```bash
+# Security Configuration
+API_SECRET_KEY=your-secret-api-key-here
+RATE_LIMIT_ENABLED=true
+CORS_ORIGINS=https://yourdomain.com
+DEBUG=false
+```
+
+**Deliverables**:
+- All API endpoints require authentication
+- Rate limiting prevents abuse
+- Security headers protect against common attacks
+- Input validation prevents malformed requests
+- LLM prompts protected from injection
+- Audit trail for security events
+- All tests passing (full regression)
+
+---
+
 ## CLI Usage Examples
 
 ```bash
@@ -378,12 +481,17 @@ python src/history_cli.py import backups/*.json
 
 ## API Endpoints
 
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/api/query` | POST | Natural language query |
-| `/api/trends` | GET | Time-series trend data |
-| `/api/topics` | GET | Topic search with articles |
-| `/history` | GET | Chat interface page |
+| Endpoint | Method | Auth | Description |
+|----------|--------|------|-------------|
+| `/api/query` | POST | Required | Natural language query |
+| `/api/trends` | GET | Required | Time-series trend data |
+| `/api/compare` | GET | Required | Period comparison |
+| `/api/topics` | GET | Required | Topic search with articles |
+| `/api/history/stats` | GET | Required | Database statistics |
+| `/history` | GET | Public | Chat interface page |
+| `/` | GET | Public | Dashboard homepage |
+
+**Authentication**: Include `X-API-Key` header with your `API_SECRET_KEY` value for protected endpoints.
 
 ## New Files Summary
 
@@ -398,6 +506,7 @@ python src/history_cli.py import backups/*.json
 | `tests/test_query_engine.py` | Unit tests for query engine |
 | `tests/test_history_cli.py` | Integration tests for CLI |
 | `tests/test_history_api.py` | Integration tests for web API |
+| `tests/test_security.py` | Security tests (Sprint 6) |
 | `tests/conftest.py` | Shared pytest fixtures |
 
 ## Modified Files Summary
@@ -405,7 +514,7 @@ python src/history_cli.py import backups/*.json
 | File | Change |
 |------|--------|
 | `src/main.py` | Add `save_summary_to_db()` call after summarization |
-| `src/web_dashboard.py` | Add `/history`, `/api/query`, `/api/trends` routes |
-| `.env.example` | Add `HISTORY_DB_PATH` |
+| `src/web_dashboard.py` | Add `/history`, `/api/query`, `/api/trends` routes + security middleware |
+| `.env.example` | Add `HISTORY_DB_PATH`, `API_SECRET_KEY`, `RATE_LIMIT_ENABLED`, `CORS_ORIGINS`, `DEBUG` |
 | `Dockerfile` | Ensure `data/` volume persistence |
-| `requirements.txt` | Add `pytest` |
+| `requirements.txt` | Add `pytest`, `Flask-Limiter`, `Flask-Talisman`, `Flask-CORS` |
