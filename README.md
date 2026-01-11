@@ -205,6 +205,54 @@ ANTHROPIC_API_KEY=sk-ant-...
 GOOGLE_API_KEY=AIza...
 ```
 
+### Provider Comparison
+
+| Provider | Best For | Speed | Cost | Notes |
+|----------|----------|-------|------|-------|
+| **OpenAI GPT-4o-mini** | General use, filtering | Fast | Low | Good balance of speed and quality |
+| **OpenAI GPT-5-mini** | Complex reasoning | Slow | Medium | Uses reasoning tokens, no temperature control |
+| **xAI Grok-3-mini** | Fast filtering | Very Fast | Low | OpenAI-compatible API |
+| **Anthropic Claude Haiku** | Fast, high quality | Fast | Low | Temperature clamped to 0-1 |
+| **Anthropic Claude Sonnet** | Best quality | Medium | High | Excellent for summarization |
+| **Google Gemini Flash** | Fast, cheap | Very Fast | Very Low | May have safety blocks |
+| **Google Gemini Pro** | Balanced | Medium | Low | Good quality at low cost |
+
+### Recommended Configurations
+
+**Budget-Optimized** (lowest cost):
+```bash
+FILTER_MODEL=google:gemini-2.0-flash
+GROUP_MODEL=google:gemini-2.0-flash
+SUMMARIZE_MODEL=google:gemini-pro
+QUERY_MODEL=google:gemini-2.0-flash
+```
+
+**Quality-Optimized** (best results):
+```bash
+FILTER_MODEL=openai:gpt-4o-mini
+GROUP_MODEL=anthropic:claude-haiku-20240307
+SUMMARIZE_MODEL=anthropic:claude-sonnet-4-20250514
+QUERY_MODEL=openai:gpt-4o-mini
+```
+
+**Balanced** (good quality, reasonable cost):
+```bash
+FILTER_MODEL=xai:grok-3-mini
+GROUP_MODEL=openai:gpt-4o-mini
+SUMMARIZE_MODEL=openai:gpt-4o
+QUERY_MODEL=openai:gpt-4o-mini
+```
+
+### Troubleshooting Providers
+
+| Issue | Provider | Solution |
+|-------|----------|----------|
+| Rate limit errors | All | Reduce request frequency or upgrade API tier |
+| Invalid API key | All | Check key format and permissions |
+| Safety blocks | Google | Content may be filtered; try different prompt |
+| Temperature not working | OpenAI GPT-5 | GPT-5 models don't support temperature |
+| Slow responses | OpenAI GPT-5 | GPT-5 uses reasoning tokens; use GPT-4 for speed |
+
 ## Historical Database & Query System
 
 The application maintains a SQLite database of all summaries, topics, and articles for trend analysis and historical queries.
