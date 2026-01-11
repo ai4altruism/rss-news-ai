@@ -25,6 +25,7 @@ from providers import (
     BaseProvider,
     OpenAIProvider,
     XAIProvider,
+    AnthropicProvider,
 )
 
 
@@ -603,3 +604,263 @@ class TestXAIProvider:
         )
 
         assert result == "Grok response"
+
+
+class TestAnthropicProvider:
+    """Tests for AnthropicProvider class."""
+
+    def test_anthropic_in_providers_list(self):
+        """Anthropic should be in the list of providers."""
+        providers = list_providers()
+        assert "anthropic" in providers
+
+    def test_get_anthropic_provider(self):
+        """Get Anthropic provider using new format."""
+        provider = get_provider("anthropic:claude-sonnet-4-20250514", anthropic_api_key="test-key")
+        assert isinstance(provider, AnthropicProvider)
+        assert provider.get_provider_name() == "anthropic"
+        assert provider.get_model_name() == "claude-sonnet-4-20250514"
+
+    def test_anthropic_provider_name(self):
+        """Should return 'anthropic' as provider name."""
+        provider = AnthropicProvider(model="claude-sonnet-4-20250514", api_key="test-key")
+        assert provider.get_provider_name() == "anthropic"
+
+    def test_anthropic_missing_api_key_raises_error(self):
+        """Missing Anthropic API key should raise ValueError."""
+        with pytest.raises(ValueError) as exc_info:
+            get_provider("anthropic:claude-sonnet-4-20250514")
+        assert "API key required" in str(exc_info.value)
+
+    @patch('providers.anthropic_provider.requests.post')
+    def test_complete_with_system_prompt(self, mock_post):
+        """Anthropic calls should use separate system parameter."""
+        mock_response = MagicMock()
+        mock_response.ok = True
+        mock_response.json.return_value = {
+            "id": "msg_123",
+            "type": "message",
+            "role": "assistant",
+            "content": [{"type": "text", "text": "Hello from Claude!"}],
+            "stop_reason": "end_turn"
+        }
+        mock_post.return_value = mock_response
+
+        provider = AnthropicProvider(model="claude-sonnet-4-20250514", api_key="test-key")
+        provider.complete("Hello", instructions="Be helpful")
+
+        call_args = mock_post.call_args
+        request_data = call_args[1]["json"]
+
+        # System prompt should be separate, not in messages
+        assert "system" in request_data
+        assert request_data["system"] == "Be helpful"
+        assert len(request_data["messages"]) == 1
+        assert request_data["messages"][0]["role"] == "user"
+        assert request_data["messages"][0]["content"] == "Hello"
+
+    @patch('providers.anthropic_provider.requests.post')
+    def test_complete_without_instructions(self, mock_post):
+        """Anthropic calls without instructions should not have system parameter."""
+        mock_response = MagicMock()
+        mock_response.ok = True
+        mock_response.json.return_value = {
+            "id": "msg_123",
+            "type": "message",
+            "role": "assistant",
+            "content": [{"type": "text", "text": "Response"}],
+            "stop_reason": "end_turn"
+        }
+        mock_post.return_value = mock_response
+
+        provider = AnthropicProvider(model="claude-sonnet-4-20250514", api_key="test-key")
+        provider.complete("Hello")
+
+        call_args = mock_post.call_args
+        request_data = call_args[1]["json"]
+
+        # Should not have system parameter
+        assert "system" not in request_data
+
+    @patch('providers.anthropic_provider.requests.post')
+    def test_complete_includes_required_headers(self, mock_post):
+        """Anthropic calls should include required headers."""
+        mock_response = MagicMock()
+        mock_response.ok = True
+        mock_response.json.return_value = {
+            "id": "msg_123",
+            "type": "message",
+            "role": "assistant",
+            "content": [{"type": "text", "text": "Response"}],
+            "stop_reason": "end_turn"
+        }
+        mock_post.return_value = mock_response
+
+        provider = AnthropicProvider(model="claude-sonnet-4-20250514", api_key="test-key")
+        provider.complete("Hello")
+
+        call_args = mock_post.call_args
+        headers = call_args[1]["headers"]
+
+        assert headers["x-api-key"] == "test-key"
+        assert "anthropic-version" in headers
+        assert headers["Content-Type"] == "application/json"
+
+    @patch('providers.anthropic_provider.requests.post')
+    def test_temperature_clamped_to_valid_range(self, mock_post):
+        """Temperature should be clamped to 0.0-1.0 for Anthropic."""
+        mock_response = MagicMock()
+        mock_response.ok = True
+        mock_response.json.return_value = {
+            "id": "msg_123",
+            "type": "message",
+            "role": "assistant",
+            "content": [{"type": "text", "text": "Response"}],
+            "stop_reason": "end_turn"
+        }
+        mock_post.return_value = mock_response
+
+        provider = AnthropicProvider(model="claude-sonnet-4-20250514", api_key="test-key")
+
+        # Test with temperature > 1.0
+        provider.complete("Hello", temperature=1.5)
+        call_args = mock_post.call_args
+        request_data = call_args[1]["json"]
+        assert request_data["temperature"] == 1.0
+
+    @patch('providers.anthropic_provider.requests.post')
+    def test_parse_response(self, mock_post):
+        """Should parse Anthropic Messages API response."""
+        mock_response = MagicMock()
+        mock_response.ok = True
+        mock_response.json.return_value = {
+            "id": "msg_123",
+            "type": "message",
+            "role": "assistant",
+            "content": [{"type": "text", "text": "Hello from Claude!"}],
+            "stop_reason": "end_turn"
+        }
+        mock_post.return_value = mock_response
+
+        provider = AnthropicProvider(model="claude-sonnet-4-20250514", api_key="test-key")
+        result = provider.complete("Hello")
+        assert result == "Hello from Claude!"
+
+    @patch('providers.anthropic_provider.requests.post')
+    def test_parse_response_multiple_text_blocks(self, mock_post):
+        """Should concatenate multiple text blocks in response."""
+        mock_response = MagicMock()
+        mock_response.ok = True
+        mock_response.json.return_value = {
+            "id": "msg_123",
+            "type": "message",
+            "role": "assistant",
+            "content": [
+                {"type": "text", "text": "Part 1. "},
+                {"type": "text", "text": "Part 2."}
+            ],
+            "stop_reason": "end_turn"
+        }
+        mock_post.return_value = mock_response
+
+        provider = AnthropicProvider(model="claude-sonnet-4-20250514", api_key="test-key")
+        result = provider.complete("Hello")
+        assert result == "Part 1. Part 2."
+
+    @patch('providers.anthropic_provider.requests.post')
+    def test_api_error_raises_exception(self, mock_post):
+        """API errors should raise exceptions."""
+        mock_response = MagicMock()
+        mock_response.ok = False
+        mock_response.status_code = 401
+        mock_response.text = "Invalid API key"
+        mock_response.json.return_value = {"error": {"message": "Invalid API key"}}
+        mock_response.raise_for_status.side_effect = Exception("401 Unauthorized")
+        mock_post.return_value = mock_response
+
+        provider = AnthropicProvider(model="claude-sonnet-4-20250514", api_key="bad-key")
+        with pytest.raises(Exception):
+            provider.complete("Hello")
+
+    @patch('providers.anthropic_provider.requests.post')
+    def test_empty_content_raises_error(self, mock_post):
+        """Empty content array should raise ValueError."""
+        mock_response = MagicMock()
+        mock_response.ok = True
+        mock_response.json.return_value = {
+            "id": "msg_123",
+            "type": "message",
+            "role": "assistant",
+            "content": [],
+            "stop_reason": "end_turn"
+        }
+        mock_post.return_value = mock_response
+
+        provider = AnthropicProvider(model="claude-sonnet-4-20250514", api_key="test-key")
+        with pytest.raises(ValueError) as exc_info:
+            provider.complete("Hello")
+        assert "No content" in str(exc_info.value)
+
+    @patch('providers.anthropic_provider.requests.post')
+    def test_uses_correct_api_url(self, mock_post):
+        """Should use Anthropic API URL."""
+        mock_response = MagicMock()
+        mock_response.ok = True
+        mock_response.json.return_value = {
+            "id": "msg_123",
+            "type": "message",
+            "role": "assistant",
+            "content": [{"type": "text", "text": "Hi"}],
+            "stop_reason": "end_turn"
+        }
+        mock_post.return_value = mock_response
+
+        provider = AnthropicProvider(model="claude-sonnet-4-20250514", api_key="test-key")
+        provider.complete("Hello")
+
+        call_args = mock_post.call_args
+        assert call_args[0][0] == "https://api.anthropic.com/v1/messages"
+
+    @patch('providers.anthropic_provider.requests.post')
+    def test_call_llm_with_anthropic(self, mock_post):
+        """call_llm should work with anthropic provider."""
+        mock_response = MagicMock()
+        mock_response.ok = True
+        mock_response.json.return_value = {
+            "id": "msg_123",
+            "type": "message",
+            "role": "assistant",
+            "content": [{"type": "text", "text": "Claude response"}],
+            "stop_reason": "end_turn"
+        }
+        mock_post.return_value = mock_response
+
+        from utils import call_llm
+        result = call_llm(
+            model_config="anthropic:claude-sonnet-4-20250514",
+            prompt="Hello",
+            api_keys={"anthropic": "test-key"},
+        )
+
+        assert result == "Claude response"
+
+    @patch('providers.anthropic_provider.requests.post')
+    def test_max_tokens_required(self, mock_post):
+        """Anthropic requires max_tokens in request."""
+        mock_response = MagicMock()
+        mock_response.ok = True
+        mock_response.json.return_value = {
+            "id": "msg_123",
+            "type": "message",
+            "role": "assistant",
+            "content": [{"type": "text", "text": "Response"}],
+            "stop_reason": "end_turn"
+        }
+        mock_post.return_value = mock_response
+
+        provider = AnthropicProvider(model="claude-sonnet-4-20250514", api_key="test-key")
+        provider.complete("Hello", max_tokens=1000)
+
+        call_args = mock_post.call_args
+        request_data = call_args[1]["json"]
+        assert request_data["max_tokens"] == 1000
