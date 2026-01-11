@@ -77,8 +77,10 @@ def filter_stories(articles, filter_prompt, filter_model, openai_api_key, batch_
             yield iterable[i : i + size]
 
     chunk_index = 0
+    total_chunks = (len(articles) + batch_size - 1) // batch_size
     for batch in chunked(articles, batch_size):
         chunk_index += 1
+        logging.info(f"Processing filter chunk {chunk_index}/{total_chunks}...")
 
         # Build the prompt with additional criteria.
         article_list_text = ""

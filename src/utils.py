@@ -22,12 +22,22 @@ def call_responses_api(
         "Authorization": f"Bearer {openai_api_key}",
         "Content-Type": "application/json",
     }
+    # gpt-5 models use reasoning tokens that count against max_output_tokens
+    # Need higher limit to leave room for actual output after reasoning
+    effective_max_tokens = max_output_tokens
+    if model.startswith("gpt-5"):
+        effective_max_tokens = max(max_output_tokens * 4, 4096)
+
     data = {
         "model": model,
         "input": prompt,
-        "temperature": temperature,
-        "max_output_tokens": max_output_tokens
+        "max_output_tokens": effective_max_tokens
     }
+    # gpt-5 models: no temperature, use low reasoning effort for speed
+    if model.startswith("gpt-5"):
+        data["reasoning"] = {"effort": "low"}
+    else:
+        data["temperature"] = temperature
     if instructions:
         data["instructions"] = instructions
 
@@ -42,22 +52,45 @@ def call_responses_api(
     if resp_json.get("error"):
         raise ValueError(f"OpenAI error: {resp_json['error']}")
 
-    # The "output" array can contain multiple items; typically we just grab the first
+    # The "output" array can contain multiple items
+    # gpt-5 models return: [reasoning block, message block]
+    # gpt-4 models return: [message block]
     output_list = resp_json.get("output", [])
     if not output_list:
         raise ValueError("No output in the OpenAI response")
 
-    content_list = output_list[0].get("content", [])
-    if not content_list:
-        raise ValueError("No content in the first output block")
+    # Find the message block (skip reasoning blocks)
+    message_output = None
+    for output_item in output_list:
+        if output_item.get("type") == "message":
+            message_output = output_item
+            break
 
-    # Extract the text
-    extracted_text = []
-    for content_piece in content_list:
-        if content_piece.get("type") == "output_text":
-            extracted_text.append(content_piece.get("text", ""))
+    # Fall back to first output if no message type found
+    if not message_output:
+        message_output = output_list[0]
 
-    return "".join(extracted_text).strip()
+    # Extract text from content array
+    content_list = message_output.get("content", [])
+    if content_list:
+        extracted_text = []
+        for content_piece in content_list:
+            if content_piece.get("type") == "output_text":
+                extracted_text.append(content_piece.get("text", ""))
+            elif content_piece.get("type") == "text":
+                extracted_text.append(content_piece.get("text", ""))
+            elif isinstance(content_piece, str):
+                extracted_text.append(content_piece)
+        if extracted_text:
+            return "".join(extracted_text).strip()
+
+    # Format 2: output[].text (simpler format)
+    if message_output.get("text"):
+        return message_output.get("text").strip()
+
+    # If nothing worked, log the structure for debugging
+    logging.error(f"Unknown response structure: {resp_json}")
+    raise ValueError("No content in the message output block")
 
 def setup_logger():
     """
