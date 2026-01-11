@@ -6,7 +6,7 @@ A Python-based application that monitors RSS feeds for generative AI news, filte
 
 - **RSS Feed Monitoring**: Tracks multiple AI-focused RSS feeds for the latest news
 - **Smart Filtering**: Uses LLM APIs to identify relevant generative AI stories
-- **Multi-Provider LLM Support**: OpenAI (GPT-4, GPT-5), xAI (Grok), Anthropic (Claude), with Google coming soon
+- **Multi-Provider LLM Support**: OpenAI (GPT-4, GPT-5), xAI (Grok), Anthropic (Claude), Google (Gemini)
 - **Topic Grouping**: Automatically groups related news into coherent topics
 - **Intelligent Summarization**: Creates concise summaries of each topic
 - **Multiple Output Formats**:
@@ -154,7 +154,7 @@ The application supports multiple LLM providers, allowing you to mix and match m
 | **OpenAI** | gpt-4o, gpt-4o-mini, gpt-5, gpt-5-mini | Available |
 | **xAI** | grok-3, grok-3-mini | Available |
 | **Anthropic** | claude-sonnet-4-20250514, claude-haiku | Available |
-| **Google** | gemini-2.0-flash, gemini-pro | Coming Soon |
+| **Google** | gemini-2.0-flash, gemini-pro | Available |
 
 ### Configuration Format
 
@@ -200,6 +200,9 @@ XAI_API_KEY=xai-...
 
 # Anthropic Claude
 ANTHROPIC_API_KEY=sk-ant-...
+
+# Google Gemini
+GOOGLE_API_KEY=AIza...
 ```
 
 ## Historical Database & Query System
@@ -419,7 +422,7 @@ License: GNU GPL v3.0
 
 ## Acknowledgements
 
-- Uses OpenAI, xAI, and Anthropic APIs for content filtering and summarization
+- Uses OpenAI, xAI, Anthropic, and Google APIs for content filtering and summarization
 - Built with Flask for the web interface
 - Uses feedparser for RSS processing
 - Slack and email integrations for notifications

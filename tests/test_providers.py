@@ -26,6 +26,7 @@ from providers import (
     OpenAIProvider,
     XAIProvider,
     AnthropicProvider,
+    GeminiProvider,
 )
 
 
@@ -864,3 +865,290 @@ class TestAnthropicProvider:
         call_args = mock_post.call_args
         request_data = call_args[1]["json"]
         assert request_data["max_tokens"] == 1000
+
+
+class TestGeminiProvider:
+    """Tests for GeminiProvider class."""
+
+    def test_google_in_providers_list(self):
+        """Google should be in the list of providers."""
+        providers = list_providers()
+        assert "google" in providers
+
+    def test_get_gemini_provider(self):
+        """Get Gemini provider using new format."""
+        provider = get_provider("google:gemini-2.0-flash", google_api_key="test-key")
+        assert isinstance(provider, GeminiProvider)
+        assert provider.get_provider_name() == "google"
+        assert provider.get_model_name() == "gemini-2.0-flash"
+
+    def test_gemini_provider_name(self):
+        """Should return 'google' as provider name."""
+        provider = GeminiProvider(model="gemini-2.0-flash", api_key="test-key")
+        assert provider.get_provider_name() == "google"
+
+    def test_gemini_missing_api_key_raises_error(self):
+        """Missing Google API key should raise ValueError."""
+        with pytest.raises(ValueError) as exc_info:
+            get_provider("google:gemini-2.0-flash")
+        assert "API key required" in str(exc_info.value)
+
+    def test_api_url_construction(self):
+        """Should construct correct API URL."""
+        provider = GeminiProvider(model="gemini-2.0-flash", api_key="test-key")
+        url = provider._get_api_url()
+        assert "gemini-2.0-flash" in url
+        assert "generateContent" in url
+
+    def test_api_url_handles_models_prefix(self):
+        """Should handle models/ prefix in model name."""
+        provider = GeminiProvider(model="models/gemini-2.0-flash", api_key="test-key")
+        url = provider._get_api_url()
+        # Should not have double "models/" in URL
+        assert "models/models" not in url
+        assert "gemini-2.0-flash" in url
+
+    @patch('providers.gemini_provider.requests.post')
+    def test_complete_with_system_instruction(self, mock_post):
+        """Gemini calls should use systemInstruction for instructions."""
+        mock_response = MagicMock()
+        mock_response.ok = True
+        mock_response.json.return_value = {
+            "candidates": [
+                {
+                    "content": {
+                        "parts": [{"text": "Hello from Gemini!"}],
+                        "role": "model"
+                    },
+                    "finishReason": "STOP"
+                }
+            ]
+        }
+        mock_post.return_value = mock_response
+
+        provider = GeminiProvider(model="gemini-2.0-flash", api_key="test-key")
+        provider.complete("Hello", instructions="Be helpful")
+
+        call_args = mock_post.call_args
+        request_data = call_args[1]["json"]
+
+        assert "systemInstruction" in request_data
+        assert request_data["systemInstruction"]["parts"][0]["text"] == "Be helpful"
+
+    @patch('providers.gemini_provider.requests.post')
+    def test_complete_without_instructions(self, mock_post):
+        """Gemini calls without instructions should not have systemInstruction."""
+        mock_response = MagicMock()
+        mock_response.ok = True
+        mock_response.json.return_value = {
+            "candidates": [
+                {
+                    "content": {
+                        "parts": [{"text": "Response"}],
+                        "role": "model"
+                    },
+                    "finishReason": "STOP"
+                }
+            ]
+        }
+        mock_post.return_value = mock_response
+
+        provider = GeminiProvider(model="gemini-2.0-flash", api_key="test-key")
+        provider.complete("Hello")
+
+        call_args = mock_post.call_args
+        request_data = call_args[1]["json"]
+
+        assert "systemInstruction" not in request_data
+
+    @patch('providers.gemini_provider.requests.post')
+    def test_complete_includes_generation_config(self, mock_post):
+        """Gemini calls should include generationConfig."""
+        mock_response = MagicMock()
+        mock_response.ok = True
+        mock_response.json.return_value = {
+            "candidates": [
+                {
+                    "content": {
+                        "parts": [{"text": "Response"}],
+                        "role": "model"
+                    },
+                    "finishReason": "STOP"
+                }
+            ]
+        }
+        mock_post.return_value = mock_response
+
+        provider = GeminiProvider(model="gemini-2.0-flash", api_key="test-key")
+        provider.complete("Hello", max_tokens=1000, temperature=0.7)
+
+        call_args = mock_post.call_args
+        request_data = call_args[1]["json"]
+
+        assert "generationConfig" in request_data
+        assert request_data["generationConfig"]["maxOutputTokens"] == 1000
+        assert request_data["generationConfig"]["temperature"] == 0.7
+
+    @patch('providers.gemini_provider.requests.post')
+    def test_api_key_in_url(self, mock_post):
+        """API key should be passed as query parameter."""
+        mock_response = MagicMock()
+        mock_response.ok = True
+        mock_response.json.return_value = {
+            "candidates": [
+                {
+                    "content": {
+                        "parts": [{"text": "Response"}],
+                        "role": "model"
+                    },
+                    "finishReason": "STOP"
+                }
+            ]
+        }
+        mock_post.return_value = mock_response
+
+        provider = GeminiProvider(model="gemini-2.0-flash", api_key="test-api-key")
+        provider.complete("Hello")
+
+        call_args = mock_post.call_args
+        url = call_args[0][0]
+        assert "key=test-api-key" in url
+
+    @patch('providers.gemini_provider.requests.post')
+    def test_parse_response(self, mock_post):
+        """Should parse Gemini API response."""
+        mock_response = MagicMock()
+        mock_response.ok = True
+        mock_response.json.return_value = {
+            "candidates": [
+                {
+                    "content": {
+                        "parts": [{"text": "Hello from Gemini!"}],
+                        "role": "model"
+                    },
+                    "finishReason": "STOP"
+                }
+            ]
+        }
+        mock_post.return_value = mock_response
+
+        provider = GeminiProvider(model="gemini-2.0-flash", api_key="test-key")
+        result = provider.complete("Hello")
+        assert result == "Hello from Gemini!"
+
+    @patch('providers.gemini_provider.requests.post')
+    def test_parse_response_multiple_parts(self, mock_post):
+        """Should concatenate multiple text parts."""
+        mock_response = MagicMock()
+        mock_response.ok = True
+        mock_response.json.return_value = {
+            "candidates": [
+                {
+                    "content": {
+                        "parts": [
+                            {"text": "Part 1. "},
+                            {"text": "Part 2."}
+                        ],
+                        "role": "model"
+                    },
+                    "finishReason": "STOP"
+                }
+            ]
+        }
+        mock_post.return_value = mock_response
+
+        provider = GeminiProvider(model="gemini-2.0-flash", api_key="test-key")
+        result = provider.complete("Hello")
+        assert result == "Part 1. Part 2."
+
+    @patch('providers.gemini_provider.requests.post')
+    def test_api_error_raises_exception(self, mock_post):
+        """API errors should raise exceptions."""
+        mock_response = MagicMock()
+        mock_response.ok = False
+        mock_response.status_code = 401
+        mock_response.text = "Invalid API key"
+        mock_response.json.return_value = {"error": {"message": "Invalid API key"}}
+        mock_response.raise_for_status.side_effect = Exception("401 Unauthorized")
+        mock_post.return_value = mock_response
+
+        provider = GeminiProvider(model="gemini-2.0-flash", api_key="bad-key")
+        with pytest.raises(Exception):
+            provider.complete("Hello")
+
+    @patch('providers.gemini_provider.requests.post')
+    def test_empty_candidates_raises_error(self, mock_post):
+        """Empty candidates array should raise ValueError."""
+        mock_response = MagicMock()
+        mock_response.ok = True
+        mock_response.json.return_value = {"candidates": []}
+        mock_post.return_value = mock_response
+
+        provider = GeminiProvider(model="gemini-2.0-flash", api_key="test-key")
+        with pytest.raises(ValueError) as exc_info:
+            provider.complete("Hello")
+        assert "No candidates" in str(exc_info.value)
+
+    @patch('providers.gemini_provider.requests.post')
+    def test_safety_block_raises_error(self, mock_post):
+        """Safety blocked response should raise ValueError."""
+        mock_response = MagicMock()
+        mock_response.ok = True
+        mock_response.json.return_value = {
+            "candidates": [
+                {
+                    "finishReason": "SAFETY",
+                    "safetyRatings": [{"category": "HARM_CATEGORY_DANGEROUS", "probability": "HIGH"}]
+                }
+            ]
+        }
+        mock_post.return_value = mock_response
+
+        provider = GeminiProvider(model="gemini-2.0-flash", api_key="test-key")
+        with pytest.raises(ValueError) as exc_info:
+            provider.complete("Hello")
+        assert "safety" in str(exc_info.value).lower()
+
+    @patch('providers.gemini_provider.requests.post')
+    def test_prompt_blocked_raises_error(self, mock_post):
+        """Blocked prompt should raise ValueError with reason."""
+        mock_response = MagicMock()
+        mock_response.ok = True
+        mock_response.json.return_value = {
+            "promptFeedback": {
+                "blockReason": "SAFETY"
+            }
+        }
+        mock_post.return_value = mock_response
+
+        provider = GeminiProvider(model="gemini-2.0-flash", api_key="test-key")
+        with pytest.raises(ValueError) as exc_info:
+            provider.complete("Hello")
+        assert "blocked" in str(exc_info.value).lower()
+
+    @patch('providers.gemini_provider.requests.post')
+    def test_call_llm_with_google(self, mock_post):
+        """call_llm should work with google provider."""
+        mock_response = MagicMock()
+        mock_response.ok = True
+        mock_response.json.return_value = {
+            "candidates": [
+                {
+                    "content": {
+                        "parts": [{"text": "Gemini response"}],
+                        "role": "model"
+                    },
+                    "finishReason": "STOP"
+                }
+            ]
+        }
+        mock_post.return_value = mock_response
+
+        from utils import call_llm
+        result = call_llm(
+            model_config="google:gemini-2.0-flash",
+            prompt="Hello",
+            api_keys={"google": "test-key"},
+        )
+
+        assert result == "Gemini response"

@@ -26,6 +26,7 @@ from .base import BaseProvider
 from .openai_provider import OpenAIProvider
 from .xai_provider import XAIProvider
 from .anthropic_provider import AnthropicProvider
+from .gemini_provider import GeminiProvider
 
 
 # Registry of available providers
@@ -33,8 +34,7 @@ _PROVIDERS = {
     "openai": OpenAIProvider,
     "xai": XAIProvider,
     "anthropic": AnthropicProvider,
-    # Future providers will be added here:
-    # "google": GeminiProvider,
+    "google": GeminiProvider,
 }
 
 
@@ -141,6 +141,7 @@ __all__ = [
     "OpenAIProvider",
     "XAIProvider",
     "AnthropicProvider",
+    "GeminiProvider",
     "get_provider",
     "parse_model_config",
     "list_providers",
