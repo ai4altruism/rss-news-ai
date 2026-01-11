@@ -24,6 +24,7 @@ from providers import (
     register_provider,
     BaseProvider,
     OpenAIProvider,
+    XAIProvider,
 )
 
 
@@ -387,3 +388,218 @@ class TestRegisterProvider:
 
         with pytest.raises(TypeError):
             register_provider("bad", NotAProvider)
+
+
+class TestXAIProvider:
+    """Tests for XAIProvider class."""
+
+    def test_xai_in_providers_list(self):
+        """xAI should be in the list of providers."""
+        providers = list_providers()
+        assert "xai" in providers
+
+    def test_get_xai_provider(self):
+        """Get xAI provider using new format."""
+        provider = get_provider("xai:grok-3-mini", xai_api_key="test-key")
+        assert isinstance(provider, XAIProvider)
+        assert provider.get_provider_name() == "xai"
+        assert provider.get_model_name() == "grok-3-mini"
+
+    def test_xai_provider_name(self):
+        """Should return 'xai' as provider name."""
+        provider = XAIProvider(model="grok-3-mini", api_key="test-key")
+        assert provider.get_provider_name() == "xai"
+
+    def test_xai_missing_api_key_raises_error(self):
+        """Missing xAI API key should raise ValueError."""
+        with pytest.raises(ValueError) as exc_info:
+            get_provider("xai:grok-3-mini")
+        assert "API key required" in str(exc_info.value)
+
+    @patch('providers.xai_provider.requests.post')
+    def test_complete_includes_temperature(self, mock_post):
+        """xAI calls should include temperature."""
+        mock_response = MagicMock()
+        mock_response.ok = True
+        mock_response.json.return_value = {
+            "choices": [
+                {
+                    "message": {
+                        "role": "assistant",
+                        "content": "Hello from Grok!"
+                    }
+                }
+            ]
+        }
+        mock_post.return_value = mock_response
+
+        provider = XAIProvider(model="grok-3-mini", api_key="test-key")
+        result = provider.complete("Hello", temperature=0.7)
+
+        call_args = mock_post.call_args
+        request_data = call_args[1]["json"]
+        assert request_data["temperature"] == 0.7
+        assert request_data["model"] == "grok-3-mini"
+
+    @patch('providers.xai_provider.requests.post')
+    def test_complete_with_instructions(self, mock_post):
+        """xAI calls should include system message when instructions provided."""
+        mock_response = MagicMock()
+        mock_response.ok = True
+        mock_response.json.return_value = {
+            "choices": [
+                {
+                    "message": {
+                        "role": "assistant",
+                        "content": "Response"
+                    }
+                }
+            ]
+        }
+        mock_post.return_value = mock_response
+
+        provider = XAIProvider(model="grok-3-mini", api_key="test-key")
+        provider.complete("Hello", instructions="Be helpful")
+
+        call_args = mock_post.call_args
+        request_data = call_args[1]["json"]
+        messages = request_data["messages"]
+
+        # Should have system message + user message
+        assert len(messages) == 2
+        assert messages[0]["role"] == "system"
+        assert messages[0]["content"] == "Be helpful"
+        assert messages[1]["role"] == "user"
+        assert messages[1]["content"] == "Hello"
+
+    @patch('providers.xai_provider.requests.post')
+    def test_complete_without_instructions(self, mock_post):
+        """xAI calls without instructions should only have user message."""
+        mock_response = MagicMock()
+        mock_response.ok = True
+        mock_response.json.return_value = {
+            "choices": [
+                {
+                    "message": {
+                        "role": "assistant",
+                        "content": "Response"
+                    }
+                }
+            ]
+        }
+        mock_post.return_value = mock_response
+
+        provider = XAIProvider(model="grok-3-mini", api_key="test-key")
+        provider.complete("Hello")
+
+        call_args = mock_post.call_args
+        request_data = call_args[1]["json"]
+        messages = request_data["messages"]
+
+        # Should only have user message
+        assert len(messages) == 1
+        assert messages[0]["role"] == "user"
+
+    @patch('providers.xai_provider.requests.post')
+    def test_parse_response(self, mock_post):
+        """Should parse xAI chat completion response."""
+        mock_response = MagicMock()
+        mock_response.ok = True
+        mock_response.json.return_value = {
+            "choices": [
+                {
+                    "message": {
+                        "role": "assistant",
+                        "content": "Hello from Grok!"
+                    }
+                }
+            ]
+        }
+        mock_post.return_value = mock_response
+
+        provider = XAIProvider(model="grok-3-mini", api_key="test-key")
+        result = provider.complete("Hello")
+        assert result == "Hello from Grok!"
+
+    @patch('providers.xai_provider.requests.post')
+    def test_api_error_raises_exception(self, mock_post):
+        """API errors should raise exceptions."""
+        mock_response = MagicMock()
+        mock_response.ok = False
+        mock_response.status_code = 401
+        mock_response.text = "Unauthorized"
+        mock_response.raise_for_status.side_effect = Exception("401 Unauthorized")
+        mock_post.return_value = mock_response
+
+        provider = XAIProvider(model="grok-3-mini", api_key="bad-key")
+        with pytest.raises(Exception):
+            provider.complete("Hello")
+
+    @patch('providers.xai_provider.requests.post')
+    def test_empty_choices_raises_error(self, mock_post):
+        """Empty choices array should raise ValueError."""
+        mock_response = MagicMock()
+        mock_response.ok = True
+        mock_response.json.return_value = {"choices": []}
+        mock_post.return_value = mock_response
+
+        provider = XAIProvider(model="grok-3-mini", api_key="test-key")
+        with pytest.raises(ValueError) as exc_info:
+            provider.complete("Hello")
+        assert "No choices" in str(exc_info.value)
+
+    @patch('providers.xai_provider.requests.post')
+    def test_missing_content_raises_error(self, mock_post):
+        """Missing content in response should raise ValueError."""
+        mock_response = MagicMock()
+        mock_response.ok = True
+        mock_response.json.return_value = {
+            "choices": [
+                {
+                    "message": {
+                        "role": "assistant"
+                    }
+                }
+            ]
+        }
+        mock_post.return_value = mock_response
+
+        provider = XAIProvider(model="grok-3-mini", api_key="test-key")
+        with pytest.raises(ValueError) as exc_info:
+            provider.complete("Hello")
+        assert "No content" in str(exc_info.value)
+
+    @patch('providers.xai_provider.requests.post')
+    def test_uses_correct_api_url(self, mock_post):
+        """Should use xAI API URL."""
+        mock_response = MagicMock()
+        mock_response.ok = True
+        mock_response.json.return_value = {
+            "choices": [{"message": {"role": "assistant", "content": "Hi"}}]
+        }
+        mock_post.return_value = mock_response
+
+        provider = XAIProvider(model="grok-3-mini", api_key="test-key")
+        provider.complete("Hello")
+
+        call_args = mock_post.call_args
+        assert call_args[0][0] == "https://api.x.ai/v1/chat/completions"
+
+    @patch('providers.xai_provider.requests.post')
+    def test_call_llm_with_xai(self, mock_post):
+        """call_llm should work with xai provider."""
+        mock_response = MagicMock()
+        mock_response.ok = True
+        mock_response.json.return_value = {
+            "choices": [{"message": {"role": "assistant", "content": "Grok response"}}]
+        }
+        mock_post.return_value = mock_response
+
+        from utils import call_llm
+        result = call_llm(
+            model_config="xai:grok-3-mini",
+            prompt="Hello",
+            api_keys={"xai": "test-key"},
+        )
+
+        assert result == "Grok response"
