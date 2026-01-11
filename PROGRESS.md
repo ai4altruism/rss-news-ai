@@ -1,7 +1,7 @@
 # Development Progress
 
 **Last Updated:** 2026-01-11
-**Last Session:** Sprint 8 (xAI Grok Integration) in progress
+**Last Session:** Sprint 9 (Anthropic Claude Integration) in progress
 
 ## Current State
 
@@ -43,23 +43,29 @@ docker run -d \
 | 5 | Polish & Production | 13 | ✅ Complete |
 | 6 | Security Hardening | 22 | ✅ Complete |
 | 7 | Provider Abstraction | 30 | ✅ Complete |
-| **8** | **xAI Grok Integration** | **13** | 🚧 **In Progress** |
+| 8 | xAI Grok Integration | 13 | ✅ Complete |
+| **9** | **Anthropic Claude Integration** | **15** | 🚧 **In Progress** |
 
-**Total Tests:** 184 passing
+**Total Tests:** 199 passing
 
-### Sprint 8 Deliverables (In Progress)
+### Sprint 9 Deliverables (In Progress)
+- `src/providers/anthropic_provider.py` - Anthropic Claude provider using Messages API
+- Updated `src/providers/__init__.py` - Added AnthropicProvider to factory
+- Updated `tests/test_providers.py` - 15 new Anthropic tests (58 total provider tests)
+- Updated `.env.example` - ANTHROPIC_API_KEY configuration
+- Updated `README.md` - Anthropic marked as Available
+
+**Anthropic Configuration Example:**
+```bash
+ANTHROPIC_API_KEY=sk-ant-...
+FILTER_MODEL=anthropic:claude-haiku-20240307
+SUMMARIZE_MODEL=anthropic:claude-sonnet-4-20250514
+```
+
+### Sprint 8 Deliverables (Complete)
 - `src/providers/xai_provider.py` - xAI Grok provider using OpenAI-compatible Chat Completions API
 - Updated `src/providers/__init__.py` - Added XAIProvider to factory
-- Updated `tests/test_providers.py` - 13 new xAI tests (43 total provider tests)
-- Updated `.env.example` - XAI_API_KEY and provider:model documentation
-- Updated `README.md` - LLM Provider Configuration section
-
-**xAI Configuration Example:**
-```bash
-XAI_API_KEY=xai-...
-FILTER_MODEL=xai:grok-3-mini
-GROUP_MODEL=xai:grok-3
-```
+- Updated `tests/test_providers.py` - 13 new xAI tests
 
 ### Sprint 7 Deliverables (Complete)
 - `src/providers/base.py` - BaseProvider abstract class
@@ -76,27 +82,27 @@ FILTER_MODEL=gpt-4o-mini
 # New format (provider:model)
 FILTER_MODEL=openai:gpt-4o-mini
 FILTER_MODEL=xai:grok-3-mini
-FILTER_MODEL=anthropic:claude-sonnet-4-20250514  # Coming soon
+FILTER_MODEL=anthropic:claude-sonnet-4-20250514
 FILTER_MODEL=google:gemini-2.0-flash             # Coming soon
 ```
 
-## Next Up: Sprint 8 Remaining Tasks
+## Next Up: Sprint 9 Remaining Tasks
 
 ### Remaining Tasks
-1. ~~Create `src/providers/xai_provider.py`~~ ✅
-2. ~~Register xAI in provider factory~~ ✅
-3. ~~Add `XAI_API_KEY` environment variable support~~ ✅
+1. ~~Create `src/providers/anthropic_provider.py`~~ ✅
+2. ~~Register Anthropic in provider factory~~ ✅
+3. ~~Add `ANTHROPIC_API_KEY` environment variable support~~ ✅
 4. ~~Write unit tests~~ ✅
-5. Manual testing with real xAI API
+5. Manual testing with real Anthropic API
 6. ~~Update documentation~~ ✅
 7. Create PR and merge
 
-### To Complete Sprint 8
+### To Complete Sprint 9
 ```bash
-# Test with real xAI API (requires XAI_API_KEY)
+# Test with real Anthropic API (requires ANTHROPIC_API_KEY)
 cd /home/theo/work/rss-news-ai
 source .venv/bin/activate
-# Add XAI_API_KEY to .env then test manually
+# Add ANTHROPIC_API_KEY to .env then test manually
 ```
 
 ## Key Files

@@ -25,14 +25,15 @@ from typing import Optional
 from .base import BaseProvider
 from .openai_provider import OpenAIProvider
 from .xai_provider import XAIProvider
+from .anthropic_provider import AnthropicProvider
 
 
 # Registry of available providers
 _PROVIDERS = {
     "openai": OpenAIProvider,
     "xai": XAIProvider,
+    "anthropic": AnthropicProvider,
     # Future providers will be added here:
-    # "anthropic": AnthropicProvider,
     # "google": GeminiProvider,
 }
 
@@ -139,6 +140,7 @@ __all__ = [
     "BaseProvider",
     "OpenAIProvider",
     "XAIProvider",
+    "AnthropicProvider",
     "get_provider",
     "parse_model_config",
     "list_providers",
