@@ -1,7 +1,7 @@
 # Development Progress
 
-**Last Updated:** 2026-01-10
-**Last Session:** Sprint 7 completed, production deployment updated
+**Last Updated:** 2026-01-11
+**Last Session:** Sprint 8 (xAI Grok Integration) in progress
 
 ## Current State
 
@@ -42,47 +42,61 @@ docker run -d \
 | 4 | Web Interface & API | 21 | ✅ Complete |
 | 5 | Polish & Production | 13 | ✅ Complete |
 | 6 | Security Hardening | 22 | ✅ Complete |
-| **7** | **Provider Abstraction** | **30** | ✅ **Complete** |
+| 7 | Provider Abstraction | 30 | ✅ Complete |
+| **8** | **xAI Grok Integration** | **13** | 🚧 **In Progress** |
 
-**Total Tests:** 171 passing
+**Total Tests:** 184 passing
 
-### Sprint 7 Deliverables (Just Completed)
+### Sprint 8 Deliverables (In Progress)
+- `src/providers/xai_provider.py` - xAI Grok provider using OpenAI-compatible Chat Completions API
+- Updated `src/providers/__init__.py` - Added XAIProvider to factory
+- Updated `tests/test_providers.py` - 13 new xAI tests (43 total provider tests)
+- Updated `.env.example` - XAI_API_KEY and provider:model documentation
+- Updated `README.md` - LLM Provider Configuration section
+
+**xAI Configuration Example:**
+```bash
+XAI_API_KEY=xai-...
+FILTER_MODEL=xai:grok-3-mini
+GROUP_MODEL=xai:grok-3
+```
+
+### Sprint 7 Deliverables (Complete)
 - `src/providers/base.py` - BaseProvider abstract class
 - `src/providers/openai_provider.py` - OpenAI implementation (gpt-4 and gpt-5 support)
 - `src/providers/__init__.py` - Provider factory with config parser
 - Updated `src/utils.py` - New `call_llm()` + backward-compatible `call_responses_api()`
 - `tests/test_providers.py` - 30 unit tests
 
-**New Configuration Format:**
+**Configuration Format:**
 ```bash
 # Old format (still works)
 FILTER_MODEL=gpt-4o-mini
 
 # New format (provider:model)
 FILTER_MODEL=openai:gpt-4o-mini
-FILTER_MODEL=anthropic:claude-sonnet-4-20250514
-FILTER_MODEL=google:gemini-2.0-flash
 FILTER_MODEL=xai:grok-3-mini
+FILTER_MODEL=anthropic:claude-sonnet-4-20250514  # Coming soon
+FILTER_MODEL=google:gemini-2.0-flash             # Coming soon
 ```
 
-## Next Up: Sprint 8 (xAI Grok Integration)
+## Next Up: Sprint 8 Remaining Tasks
 
-### Goal
-Add xAI Grok support (easiest since it's OpenAI-compatible API).
-
-### Tasks
-1. Create `src/providers/xai_provider.py`
-2. Register xAI in provider factory
-3. Add `XAI_API_KEY` environment variable support
-4. Write unit tests
+### Remaining Tasks
+1. ~~Create `src/providers/xai_provider.py`~~ ✅
+2. ~~Register xAI in provider factory~~ ✅
+3. ~~Add `XAI_API_KEY` environment variable support~~ ✅
+4. ~~Write unit tests~~ ✅
 5. Manual testing with real xAI API
-6. Update documentation
+6. ~~Update documentation~~ ✅
+7. Create PR and merge
 
-### To Start Sprint 8
+### To Complete Sprint 8
 ```bash
-cd /Users/theo/work/rss-news-ai
+# Test with real xAI API (requires XAI_API_KEY)
+cd /home/theo/work/rss-news-ai
 source .venv/bin/activate
-git checkout -b feature/sprint-8-xai-integration
+# Add XAI_API_KEY to .env then test manually
 ```
 
 ## Key Files

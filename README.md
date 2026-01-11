@@ -1,11 +1,12 @@
 # Generative AI News Tracker
 
-A Python-based application that monitors RSS feeds for generative AI news, filters relevant stories using OpenAI's API, groups them by topic, and presents summaries through multiple output formats including web dashboard, Slack, and email.
+A Python-based application that monitors RSS feeds for generative AI news, filters relevant stories using LLM APIs (OpenAI, xAI Grok, and more), groups them by topic, and presents summaries through multiple output formats including web dashboard, Slack, and email.
 
 ## Features
 
 - **RSS Feed Monitoring**: Tracks multiple AI-focused RSS feeds for the latest news
-- **Smart Filtering**: Uses OpenAI's API to identify relevant generative AI stories
+- **Smart Filtering**: Uses LLM APIs to identify relevant generative AI stories
+- **Multi-Provider LLM Support**: OpenAI (GPT-4, GPT-5), xAI (Grok), with Anthropic and Google coming soon
 - **Topic Grouping**: Automatically groups related news into coherent topics
 - **Intelligent Summarization**: Creates concise summaries of each topic
 - **Multiple Output Formats**:
@@ -140,6 +141,62 @@ SMTP_USERNAME=your_email@example.com
 SMTP_PASSWORD=your_email_password
 SMTP_USE_TLS=True
 EMAIL_RECIPIENTS=recipient1@example.com,recipient2@example.com
+```
+
+## LLM Provider Configuration
+
+The application supports multiple LLM providers, allowing you to mix and match models for different tasks.
+
+### Supported Providers
+
+| Provider | Models | Status |
+|----------|--------|--------|
+| **OpenAI** | gpt-4o, gpt-4o-mini, gpt-5, gpt-5-mini | Available |
+| **xAI** | grok-3, grok-3-mini | Available |
+| **Anthropic** | claude-sonnet-4-20250514, claude-haiku | Coming Soon |
+| **Google** | gemini-2.0-flash, gemini-pro | Coming Soon |
+
+### Configuration Format
+
+Models can be specified in two formats:
+
+```bash
+# Old format (defaults to OpenAI)
+FILTER_MODEL=gpt-4o-mini
+
+# New format (explicit provider)
+FILTER_MODEL=openai:gpt-4o-mini
+FILTER_MODEL=xai:grok-3-mini
+```
+
+### Mix and Match Providers
+
+You can use different providers for different tasks to optimize cost and quality:
+
+```bash
+# Fast, cheap filtering with xAI
+FILTER_MODEL=xai:grok-3-mini
+
+# Quality grouping with OpenAI
+GROUP_MODEL=openai:gpt-4o-mini
+
+# High-quality summaries with GPT-5
+SUMMARIZE_MODEL=openai:gpt-5-mini
+
+# Cost-effective queries
+QUERY_MODEL=openai:gpt-4o-mini
+```
+
+### API Keys
+
+Set the API keys for the providers you use:
+
+```bash
+# OpenAI
+OPENAI_API_KEY=sk-proj-...
+
+# xAI Grok
+XAI_API_KEY=xai-...
 ```
 
 ## Historical Database & Query System
@@ -359,7 +416,7 @@ License: GNU GPL v3.0
 
 ## Acknowledgements
 
-- Uses OpenAI's API for content filtering and summarization
+- Uses OpenAI and xAI APIs for content filtering and summarization
 - Built with Flask for the web interface
 - Uses feedparser for RSS processing
 - Slack and email integrations for notifications
