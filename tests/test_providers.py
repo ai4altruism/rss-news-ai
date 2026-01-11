@@ -1,0 +1,389 @@
+# tests/test_providers.py
+
+"""
+Unit tests for the LLM provider abstraction layer.
+
+Tests cover:
+- Provider factory and configuration parsing
+- OpenAI provider implementation
+- Backward compatibility
+- Error handling
+"""
+
+import pytest
+from unittest.mock import patch, MagicMock
+
+import sys
+import os
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
+
+from providers import (
+    get_provider,
+    parse_model_config,
+    list_providers,
+    register_provider,
+    BaseProvider,
+    OpenAIProvider,
+)
+
+
+class TestParseModelConfig:
+    """Tests for parse_model_config function."""
+
+    def test_old_format_defaults_to_openai(self):
+        """Old format without provider prefix should default to OpenAI."""
+        provider, model = parse_model_config("gpt-4o-mini")
+        assert provider == "openai"
+        assert model == "gpt-4o-mini"
+
+    def test_old_format_gpt5(self):
+        """Old format with gpt-5 model should default to OpenAI."""
+        provider, model = parse_model_config("gpt-5-mini")
+        assert provider == "openai"
+        assert model == "gpt-5-mini"
+
+    def test_new_format_openai(self):
+        """New format with explicit openai provider."""
+        provider, model = parse_model_config("openai:gpt-4o-mini")
+        assert provider == "openai"
+        assert model == "gpt-4o-mini"
+
+    def test_new_format_anthropic(self):
+        """New format with anthropic provider."""
+        provider, model = parse_model_config("anthropic:claude-sonnet-4-20250514")
+        assert provider == "anthropic"
+        assert model == "claude-sonnet-4-20250514"
+
+    def test_new_format_google(self):
+        """New format with google provider."""
+        provider, model = parse_model_config("google:gemini-2.0-flash")
+        assert provider == "google"
+        assert model == "gemini-2.0-flash"
+
+    def test_new_format_xai(self):
+        """New format with xai provider."""
+        provider, model = parse_model_config("xai:grok-3-mini")
+        assert provider == "xai"
+        assert model == "grok-3-mini"
+
+    def test_provider_name_case_insensitive(self):
+        """Provider name should be case insensitive."""
+        provider, model = parse_model_config("OpenAI:gpt-4o-mini")
+        assert provider == "openai"
+        assert model == "gpt-4o-mini"
+
+    def test_model_with_colons(self):
+        """Model name can contain colons (only first colon splits)."""
+        provider, model = parse_model_config("google:models/gemini-2.0-flash")
+        assert provider == "google"
+        assert model == "models/gemini-2.0-flash"
+
+
+class TestListProviders:
+    """Tests for list_providers function."""
+
+    def test_openai_in_providers(self):
+        """OpenAI should be in the list of providers."""
+        providers = list_providers()
+        assert "openai" in providers
+
+    def test_returns_list(self):
+        """Should return a list."""
+        providers = list_providers()
+        assert isinstance(providers, list)
+
+
+class TestGetProvider:
+    """Tests for get_provider factory function."""
+
+    def test_get_openai_provider_old_format(self):
+        """Get OpenAI provider using old format."""
+        provider = get_provider("gpt-4o-mini", openai_api_key="test-key")
+        assert isinstance(provider, OpenAIProvider)
+        assert provider.get_provider_name() == "openai"
+        assert provider.get_model_name() == "gpt-4o-mini"
+
+    def test_get_openai_provider_new_format(self):
+        """Get OpenAI provider using new format."""
+        provider = get_provider("openai:gpt-4o-mini", openai_api_key="test-key")
+        assert isinstance(provider, OpenAIProvider)
+        assert provider.get_model_name() == "gpt-4o-mini"
+
+    def test_missing_api_key_raises_error(self):
+        """Missing API key should raise ValueError."""
+        with pytest.raises(ValueError) as exc_info:
+            get_provider("gpt-4o-mini")
+        assert "API key required" in str(exc_info.value)
+
+    def test_unknown_provider_raises_error(self):
+        """Unknown provider should raise ValueError."""
+        with pytest.raises(ValueError) as exc_info:
+            get_provider("unknown:model", openai_api_key="test-key")
+        assert "Unknown provider" in str(exc_info.value)
+        assert "unknown" in str(exc_info.value)
+
+    def test_provider_validates_config(self):
+        """Provider should validate configuration."""
+        provider = get_provider("gpt-4o-mini", openai_api_key="test-key")
+        assert provider.validate_config() is True
+
+    def test_provider_repr(self):
+        """Provider should have useful repr."""
+        provider = get_provider("gpt-4o-mini", openai_api_key="test-key")
+        repr_str = repr(provider)
+        assert "OpenAIProvider" in repr_str
+        assert "gpt-4o-mini" in repr_str
+
+
+class TestOpenAIProvider:
+    """Tests for OpenAIProvider class."""
+
+    def test_is_gpt5_model_true(self):
+        """Should detect gpt-5 models."""
+        provider = OpenAIProvider(model="gpt-5-mini", api_key="test-key")
+        assert provider._is_gpt5_model() is True
+
+    def test_is_gpt5_model_false(self):
+        """Should not detect gpt-4 as gpt-5."""
+        provider = OpenAIProvider(model="gpt-4o-mini", api_key="test-key")
+        assert provider._is_gpt5_model() is False
+
+    def test_provider_name(self):
+        """Should return 'openai' as provider name."""
+        provider = OpenAIProvider(model="gpt-4o-mini", api_key="test-key")
+        assert provider.get_provider_name() == "openai"
+
+    @patch('providers.openai_provider.requests.post')
+    def test_complete_gpt4_includes_temperature(self, mock_post):
+        """GPT-4 calls should include temperature."""
+        mock_response = MagicMock()
+        mock_response.ok = True
+        mock_response.json.return_value = {
+            "output": [
+                {
+                    "type": "message",
+                    "content": [{"type": "output_text", "text": "Hello!"}]
+                }
+            ]
+        }
+        mock_post.return_value = mock_response
+
+        provider = OpenAIProvider(model="gpt-4o-mini", api_key="test-key")
+        result = provider.complete("Hello", temperature=0.5)
+
+        # Check that temperature was included in the request
+        call_args = mock_post.call_args
+        request_data = call_args[1]["json"]
+        assert "temperature" in request_data
+        assert request_data["temperature"] == 0.5
+        assert "reasoning" not in request_data
+
+    @patch('providers.openai_provider.requests.post')
+    def test_complete_gpt5_no_temperature(self, mock_post):
+        """GPT-5 calls should not include temperature."""
+        mock_response = MagicMock()
+        mock_response.ok = True
+        mock_response.json.return_value = {
+            "output": [
+                {"type": "reasoning", "summary": []},
+                {
+                    "type": "message",
+                    "content": [{"type": "output_text", "text": "Hello!"}]
+                }
+            ]
+        }
+        mock_post.return_value = mock_response
+
+        provider = OpenAIProvider(model="gpt-5-mini", api_key="test-key")
+        result = provider.complete("Hello", temperature=0.5)
+
+        # Check that temperature was NOT included, but reasoning was
+        call_args = mock_post.call_args
+        request_data = call_args[1]["json"]
+        assert "temperature" not in request_data
+        assert "reasoning" in request_data
+        assert request_data["reasoning"]["effort"] == "low"
+
+    @patch('providers.openai_provider.requests.post')
+    def test_complete_gpt5_higher_token_limit(self, mock_post):
+        """GPT-5 calls should use higher token limit."""
+        mock_response = MagicMock()
+        mock_response.ok = True
+        mock_response.json.return_value = {
+            "output": [
+                {"type": "reasoning", "summary": []},
+                {
+                    "type": "message",
+                    "content": [{"type": "output_text", "text": "Hello!"}]
+                }
+            ]
+        }
+        mock_post.return_value = mock_response
+
+        provider = OpenAIProvider(model="gpt-5-mini", api_key="test-key")
+        provider.complete("Hello", max_tokens=500)
+
+        call_args = mock_post.call_args
+        request_data = call_args[1]["json"]
+        # Should be at least 4x or 4096
+        assert request_data["max_output_tokens"] >= 2000
+
+    @patch('providers.openai_provider.requests.post')
+    def test_parse_response_gpt4_format(self, mock_post):
+        """Should parse GPT-4 response format."""
+        mock_response = MagicMock()
+        mock_response.ok = True
+        mock_response.json.return_value = {
+            "output": [
+                {
+                    "type": "message",
+                    "content": [{"type": "output_text", "text": "Hello world!"}]
+                }
+            ]
+        }
+        mock_post.return_value = mock_response
+
+        provider = OpenAIProvider(model="gpt-4o-mini", api_key="test-key")
+        result = provider.complete("Hello")
+        assert result == "Hello world!"
+
+    @patch('providers.openai_provider.requests.post')
+    def test_parse_response_gpt5_format(self, mock_post):
+        """Should parse GPT-5 response format (with reasoning block)."""
+        mock_response = MagicMock()
+        mock_response.ok = True
+        mock_response.json.return_value = {
+            "output": [
+                {"type": "reasoning", "summary": []},
+                {
+                    "type": "message",
+                    "content": [{"type": "output_text", "text": "Hello from GPT-5!"}]
+                }
+            ]
+        }
+        mock_post.return_value = mock_response
+
+        provider = OpenAIProvider(model="gpt-5-mini", api_key="test-key")
+        result = provider.complete("Hello")
+        assert result == "Hello from GPT-5!"
+
+    @patch('providers.openai_provider.requests.post')
+    def test_api_error_raises_exception(self, mock_post):
+        """API errors should raise exceptions."""
+        mock_response = MagicMock()
+        mock_response.ok = False
+        mock_response.status_code = 401
+        mock_response.text = "Unauthorized"
+        mock_response.raise_for_status.side_effect = Exception("401 Unauthorized")
+        mock_post.return_value = mock_response
+
+        provider = OpenAIProvider(model="gpt-4o-mini", api_key="bad-key")
+        with pytest.raises(Exception):
+            provider.complete("Hello")
+
+
+class TestBackwardCompatibility:
+    """Tests for backward compatibility with existing code."""
+
+    @patch('providers.openai_provider.requests.post')
+    def test_call_responses_api_uses_provider(self, mock_post):
+        """call_responses_api should use provider abstraction."""
+        mock_response = MagicMock()
+        mock_response.ok = True
+        mock_response.json.return_value = {
+            "output": [
+                {
+                    "type": "message",
+                    "content": [{"type": "output_text", "text": "Response"}]
+                }
+            ]
+        }
+        mock_post.return_value = mock_response
+
+        from utils import call_responses_api
+        result = call_responses_api(
+            model="gpt-4o-mini",
+            prompt="Hello",
+            openai_api_key="test-key",
+            instructions="Be helpful",
+            max_output_tokens=100,
+            temperature=0.7,
+        )
+
+        assert result == "Response"
+        # Verify the API was called
+        assert mock_post.called
+
+    @patch('providers.openai_provider.requests.post')
+    def test_call_llm_with_old_format(self, mock_post):
+        """call_llm should work with old format config."""
+        mock_response = MagicMock()
+        mock_response.ok = True
+        mock_response.json.return_value = {
+            "output": [
+                {
+                    "type": "message",
+                    "content": [{"type": "output_text", "text": "Response"}]
+                }
+            ]
+        }
+        mock_post.return_value = mock_response
+
+        from utils import call_llm
+        result = call_llm(
+            model_config="gpt-4o-mini",
+            prompt="Hello",
+            api_keys={"openai": "test-key"},
+        )
+
+        assert result == "Response"
+
+    @patch('providers.openai_provider.requests.post')
+    def test_call_llm_with_new_format(self, mock_post):
+        """call_llm should work with new format config."""
+        mock_response = MagicMock()
+        mock_response.ok = True
+        mock_response.json.return_value = {
+            "output": [
+                {
+                    "type": "message",
+                    "content": [{"type": "output_text", "text": "Response"}]
+                }
+            ]
+        }
+        mock_post.return_value = mock_response
+
+        from utils import call_llm
+        result = call_llm(
+            model_config="openai:gpt-4o-mini",
+            prompt="Hello",
+            api_keys={"openai": "test-key"},
+        )
+
+        assert result == "Response"
+
+
+class TestRegisterProvider:
+    """Tests for provider registration."""
+
+    def test_register_custom_provider(self):
+        """Should be able to register a custom provider."""
+        class CustomProvider(BaseProvider):
+            def complete(self, prompt, instructions="", max_tokens=500, temperature=1.0):
+                return "custom response"
+            def get_provider_name(self):
+                return "custom"
+
+        register_provider("custom", CustomProvider)
+        assert "custom" in list_providers()
+
+        # Custom providers would need factory updates to handle their API keys
+        # For now, just verify registration works
+
+    def test_register_non_provider_fails(self):
+        """Should fail to register non-provider class."""
+        class NotAProvider:
+            pass
+
+        with pytest.raises(TypeError):
+            register_provider("bad", NotAProvider)
