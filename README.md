@@ -1,34 +1,49 @@
-# Generative AI News Tracker
+# RSS News AI
 
-A Python-based application that monitors RSS feeds for generative AI news, filters relevant stories using LLM APIs (OpenAI, xAI Grok, and more), groups them by topic, and presents summaries through multiple output formats including web dashboard, Slack, and email.
+**AI-powered news monitoring that uses LLMs to filter, group, and summarize news from RSS feeds.**
 
-## Features
+## Why This Exists
 
-- **RSS Feed Monitoring**: Tracks multiple AI-focused RSS feeds for the latest news
-- **Smart Filtering**: Uses LLM APIs to identify relevant generative AI stories
-- **Multi-Provider LLM Support**: OpenAI (GPT-4, GPT-5), xAI (Grok), Anthropic (Claude), Google (Gemini)
-- **Topic Grouping**: Automatically groups related news into coherent topics
-- **Intelligent Summarization**: Creates concise summaries of each topic
-- **Multiple Output Formats**:
-  - Web dashboard with responsive design
-  - Slack channel integration
-  - Email delivery
-  - Console output
-- **Deduplication**: Prevents the same stories from appearing repeatedly
-- **History Management**: Maintains a configurable article history to avoid duplicates
-- **Scheduled Processing**: Can run as a daemon to periodically check for new content
-- **Historical Database**: SQLite storage for trend analysis and historical queries
-- **Natural Language Queries**: Ask questions about historical data using LLM
-- **Topic Aliases**: Normalize topic variations (e.g., "OpenAI News" → "OpenAI")
-- **Data Export**: Export topics and articles to CSV or JSON formats
-- **REST API**: Programmatic access to trends, comparisons, and search
+The generative AI space moves fast. Hundreds of articles appear daily across tech blogs, news sites, and company announcements. Most are noise—rewritten press releases, speculation, or tangential mentions. Finding the signal requires reading everything, which doesn't scale.
+
+This application solves that problem by using AI to curate AI news. It monitors RSS feeds, uses LLMs to identify genuinely relevant stories, groups related coverage into coherent topics, and delivers concise summaries to Slack, email, or a web dashboard.
+
+## What Makes This Approach Different
+
+**LLM-powered filtering, not keyword matching.** Traditional news aggregators use keywords and rules. This app uses language models to understand context—distinguishing a breakthrough announcement from a think piece about AI ethics, or filtering out articles that merely mention "AI" in passing.
+
+**Multi-provider architecture.** Not locked into one vendor. Mix and match OpenAI, Anthropic Claude, Google Gemini, and xAI Grok for different tasks. Use a fast, cheap model for filtering hundreds of articles, and a more capable model for generating summaries.
+
+**Cost-aware by design.** Every LLM call is tracked—tokens, costs, response times. The usage monitoring system lets you see exactly what you're spending and optimize your model choices accordingly.
+
+**Historical intelligence.** Beyond daily summaries, the app maintains a SQLite database of all processed content. Query it with natural language: "What were the top AI themes last month?" or "Show me coverage of OpenAI over time."
+
+## Key Features
+
+| Category | Capabilities |
+|----------|-------------|
+| **Input** | RSS feed monitoring, deduplication, configurable history retention |
+| **Processing** | LLM filtering, topic grouping, intelligent summarization |
+| **Output** | Slack, email, web dashboard, console, REST API |
+| **LLM Providers** | OpenAI (GPT-4/5), Anthropic (Claude), Google (Gemini), xAI (Grok) |
+| **Analytics** | Token usage tracking, cost estimation, response time monitoring |
+| **History** | SQLite storage, natural language queries, trend analysis, data export |
+
+## Current Version
+
+**v2.1** — Released January 2026
+
+- Multi-provider LLM support with seamless switching
+- Token usage monitoring and cost tracking
+- 285 automated tests
+- Production-ready Docker deployment
 
 ## Installation
 
 1. Clone the repository:
    ```bash
-   git clone https://github.com/yourusername/genai-news-tracker.git
-   cd genai-news-tracker
+   git clone https://github.com/ai4altruism/rss-news-ai.git
+   cd rss-news-ai
    ```
 
 2. Create a virtual environment and install dependencies:
@@ -319,6 +334,30 @@ python src/history_cli.py export articles --start 2024-01-01 --end 2024-06-30 --
 python src/history_cli.py export json --output backup.json
 ```
 
+### Usage Monitoring CLI
+
+Track LLM token usage, costs, and performance:
+
+```bash
+# Overall usage statistics
+python src/usage_cli.py stats
+
+# Usage breakdown by provider
+python src/usage_cli.py by-provider
+
+# Usage breakdown by task type (filter, group, summarize, query)
+python src/usage_cli.py by-task
+
+# Usage breakdown by model
+python src/usage_cli.py by-model
+
+# Cost analysis
+python src/usage_cli.py costs
+
+# Export usage data to CSV
+python src/usage_cli.py export --output usage_report.csv
+```
+
 ### Web API Endpoints
 
 | Endpoint | Method | Description |
@@ -356,7 +395,11 @@ curl -X POST http://localhost:5002/api/query \
 ### Build the Image
 
 ```bash
-docker build -t rss-news-ai .
+# Standard build
+docker build -t rss-news-ai:v2.1 .
+
+# Cross-platform build (e.g., from Mac to Linux AMD64)
+docker buildx build --platform linux/amd64 -t rss-news-ai:v2.1 --load .
 ```
 
 ### Run with Volume Mounts
@@ -365,17 +408,28 @@ For production, mount the data and logs directories as volumes to persist the da
 
 ```bash
 # Create host directories
-mkdir -p /var/lib/rss-news-ai/data
-mkdir -p /var/lib/rss-news-ai/logs
+sudo mkdir -p /var/lib/rss-news-ai/data
+sudo mkdir -p /var/lib/rss-news-ai/logs
 
-# Run container with volumes
+# Run container with scheduler (Slack output)
+docker run -d \
+  --name a4a-ai-news \
+  --restart unless-stopped \
+  -v /var/lib/rss-news-ai/data:/app/data \
+  -v /var/lib/rss-news-ai/logs:/app/logs \
+  -v ~/a4a-ai-news/.env:/app/.env:ro \
+  --entrypoint python \
+  rss-news-ai:v2.1 \
+  src/scheduler.py --output slack
+
+# Run with web dashboard exposed
 docker run -d \
   --name rss-news-ai \
   -v /var/lib/rss-news-ai/data:/app/data \
   -v /var/lib/rss-news-ai/logs:/app/logs \
   -p 5002:5002 \
   --env-file .env \
-  rss-news-ai --output slack web
+  rss-news-ai:v2.1 --output web
 ```
 
 ### Access Database from Host
@@ -391,23 +445,68 @@ cp /var/lib/rss-news-ai/data/history.db /backup/history_$(date +%Y%m%d).db
 ls -lh /var/lib/rss-news-ai/data/history.db
 ```
 
-## 📁 Architecture
+## Architecture
 
-The application consists of several modules:
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    CLI / Web Interface                       │
+├─────────────────────────────────────────────────────────────┤
+│  main.py            │  web_dashboard.py  │  history_cli.py  │
+│  scheduler.py       │  API endpoints     │  usage_cli.py    │
+└─────────────┬───────────────────┬─────────────┬─────────────┘
+              │                   │             │
+              ▼                   ▼             ▼
+┌─────────────────────────────────────────────────────────────┐
+│                    Processing Pipeline                       │
+├─────────────────────────────────────────────────────────────┤
+│  rss_reader.py      │  llm_filter.py    │  summarizer.py   │
+│  article_history.py │  query_engine.py  │                  │
+└─────────────────────────────┬───────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────┐
+│                Provider Abstraction Layer                    │
+├─────────────────────────────────────────────────────────────┤
+│  providers/base.py      │  providers/__init__.py            │
+│  providers/openai_provider.py    │  providers/xai_provider.py     │
+│  providers/anthropic_provider.py │  providers/gemini_provider.py  │
+└─────────────────────────────┬───────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────┐
+│              LLM APIs (OpenAI, Anthropic, Google, xAI)       │
+└─────────────────────────────────────────────────────────────┘
+```
 
-- `main.py` - Main application logic and command-line interface
-- `rss_reader.py` - Handles fetching and parsing RSS feeds
-- `llm_filter.py` - Uses LLM to filter relevant articles
-- `summarizer.py` - Groups and summarizes articles by topic
-- `article_history.py` - Manages the history of processed articles
-- `history_db.py` - SQLite database for historical storage and queries
-- `query_engine.py` - LLM-powered natural language query processing
-- `history_cli.py` - Command-line interface for historical queries
-- `web_dashboard.py` - Web interface for viewing results and history
-- `slack_publisher.py` - Publishes results to Slack
-- `email_reporter.py` - Sends results via email
-- `scheduler.py` - Runs the application at scheduled intervals
-- `utils.py` - Utility functions shared across modules
+### Core Modules
+
+| Module | Purpose |
+|--------|---------|
+| `main.py` | Main application logic and CLI |
+| `scheduler.py` | Scheduled/daemon execution |
+| `rss_reader.py` | RSS feed fetching and parsing |
+| `llm_filter.py` | LLM-based article filtering |
+| `summarizer.py` | Topic grouping and summarization |
+| `article_history.py` | Deduplication and history management |
+| `history_db.py` | SQLite database operations |
+| `query_engine.py` | Natural language query processing |
+| `history_cli.py` | CLI for historical queries |
+| `usage_cli.py` | CLI for usage monitoring |
+| `pricing.py` | LLM cost estimation |
+| `web_dashboard.py` | Flask web interface and API |
+| `slack_publisher.py` | Slack integration |
+| `email_reporter.py` | Email delivery |
+| `utils.py` | Shared utilities |
+
+### Provider Modules
+
+| Module | Provider |
+|--------|----------|
+| `providers/base.py` | Abstract base class and `LLMUsageMetadata` |
+| `providers/openai_provider.py` | OpenAI GPT-4/GPT-5 |
+| `providers/xai_provider.py` | xAI Grok |
+| `providers/anthropic_provider.py` | Anthropic Claude |
+| `providers/gemini_provider.py` | Google Gemini |
 
 ## 🔄 Customization
 

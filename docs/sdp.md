@@ -1406,3 +1406,13 @@ The design achieved:
 - **Usage Monitoring**: Track tokens, costs, and response times per LLM call
 
 Users can configure any combination of OpenAI, xAI, Anthropic, and Google models for filtering, grouping, summarization, and querying tasks, with full usage tracking and cost analysis.
+
+---
+
+## Release History
+
+| Version | Date | Highlights |
+|---------|------|------------|
+| v2.1 | 2026-01-12 | Token usage monitoring, cost tracking, 285 tests |
+| v2.0 | 2026-01-11 | Multi-provider LLM support (Sprints 7-11) |
+| v1.0 | 2025-12-14 | Core features complete (Sprints 1-6) |

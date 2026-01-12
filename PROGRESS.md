@@ -1,19 +1,19 @@
 # Development Progress
 
 **Last Updated:** 2026-01-12
-**Last Session:** Sprint 12 (Token Usage Monitoring) - Complete
+**Last Session:** Deployed v2.1 with Sprint 12 token usage monitoring
 
 ## Current State
 
 ### Production Deployment (dive02)
 - **Container:** `a4a-ai-news` running on dive02
-- **Image:** `rss-news-ai:v2.0`
-- **Status:** Running with mixed model configuration
+- **Image:** `rss-news-ai:v2.1` (Sprint 12 - token usage monitoring)
+- **Status:** Running in production
 - **Config location:** `~/a4a-ai-news/.env`
 
 **Current .env model configuration:**
 ```bash
-FILTER_MODEL=gpt-4o-mini      # Fast filtering (changed from gpt-5-mini)
+FILTER_MODEL=gpt-4o-mini      # Fast filtering
 GROUP_MODEL=gpt-5-mini        # Quality grouping
 SUMMARIZE_MODEL=gpt-5-mini    # Quality summaries
 QUERY_MODEL=gpt-5-mini        # Not used in Slack-only mode
@@ -28,8 +28,32 @@ docker run -d \
   -v /var/lib/rss-news-ai/logs:/app/logs \
   -v ~/a4a-ai-news/.env:/app/.env:ro \
   --entrypoint python \
-  rss-news-ai:v2.0 \
+  rss-news-ai:v2.1 \
   src/scheduler.py --output slack
+```
+
+**Database migration for v2.1:**
+```bash
+# Run once after upgrading to v2.1 to create llm_usage table
+sqlite3 /var/lib/rss-news-ai/data/history.db "
+CREATE TABLE IF NOT EXISTS llm_usage (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    timestamp TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    provider TEXT NOT NULL,
+    model TEXT NOT NULL,
+    task_type TEXT NOT NULL,
+    input_tokens INTEGER NOT NULL,
+    output_tokens INTEGER NOT NULL,
+    total_tokens INTEGER NOT NULL,
+    cost_usd REAL,
+    response_time_ms INTEGER,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_llm_usage_provider ON llm_usage(provider);
+CREATE INDEX IF NOT EXISTS idx_llm_usage_task_type ON llm_usage(task_type);
+CREATE INDEX IF NOT EXISTS idx_llm_usage_timestamp ON llm_usage(timestamp);
+CREATE INDEX IF NOT EXISTS idx_llm_usage_model ON llm_usage(model);
+"
 ```
 
 ### Completed Sprints
