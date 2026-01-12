@@ -1,14 +1,19 @@
 # Development Progress
 
 **Last Updated:** 2026-01-12
-**Last Session:** Deployed v2.1 with Sprint 12 token usage monitoring
+**Last Session:** Sprint 13 - Semantic Deduplication
 
 ## Current State
+
+### Development Status
+- **Version:** v2.2 (Sprint 13 - semantic deduplication)
+- **Tests:** 321 passing (36 new embeddings tests)
+- **Branch:** `feature/sprint-13-semantic-deduplication`
 
 ### Production Deployment (dive02)
 - **Container:** `a4a-ai-news` running on dive02
 - **Image:** `rss-news-ai:v2.1` (Sprint 12 - token usage monitoring)
-- **Status:** Running in production
+- **Status:** Running in production (pending upgrade to v2.2)
 - **Config location:** `~/a4a-ai-news/.env`
 
 **Current .env model configuration:**
@@ -71,9 +76,19 @@ CREATE INDEX IF NOT EXISTS idx_llm_usage_model ON llm_usage(model);
 | 9 | Anthropic Claude Integration | 15 | ✅ Complete |
 | 10 | Google Gemini Integration | 17 | ✅ Complete |
 | 11 | Provider Testing & Hardening | 45 | ✅ Complete |
-| **12** | **Token Usage Monitoring** | **24** | ✅ Complete |
+| 12 | Token Usage Monitoring | 24 | ✅ Complete |
+| **13** | **Semantic Deduplication** | **36** | ✅ Complete |
 
-**Total Tests:** 285 passing
+**Total Tests:** 321 passing
+
+### Sprint 13 Deliverables (Complete)
+- `src/embeddings.py` - Semantic deduplication using OpenAI embeddings
+- `src/history_db.py` - `article_embeddings` table schema and query functions
+- `src/pricing.py` - Embedding pricing for cost estimation
+- Updated `src/main.py` - Integration of semantic dedup into pipeline
+- Updated `requirements.txt` - Added numpy dependency
+- `tests/test_embeddings.py` - 36 unit tests for embeddings module
+- Updated README.md - Documentation for semantic deduplication
 
 ### Sprint 12 Deliverables (Complete)
 - `src/history_db.py` - `llm_usage` table schema and query functions
@@ -162,9 +177,10 @@ All 4 LLM providers are fully implemented and tested:
 
 | File | Purpose |
 |------|---------|
-| `docs/sdp.md` | Software Development Plan (Sprints 1-12) |
+| `docs/sdp.md` | Software Development Plan (Sprints 1-13) |
 | `docs/sprint-*-summary.md` | Individual sprint summaries |
 | `src/providers/` | LLM provider abstraction layer |
+| `src/embeddings.py` | Semantic deduplication with embeddings |
 | `src/utils.py` | Main LLM calling utilities |
 | `src/pricing.py` | LLM pricing and cost estimation |
 | `src/usage_cli.py` | Usage reporting CLI tool |
@@ -228,15 +244,28 @@ _log_usage() → saves to llm_usage table (non-fatal)
 
 ## 🎉 All Sprints Complete!
 
-**Sprint 12: Token Usage Monitoring** ✅ Complete (2026-01-12)
+**Sprint 13: Semantic Deduplication** ✅ Complete (2026-01-12)
 
-All 12 sprints have been completed. Sprint 12 features:
-- Token usage tracking across all 4 providers
-- Cost estimation based on provider pricing
-- Response time tracking
-- SQLite persistence in `llm_usage` table
-- CLI tool for usage reporting (`src/usage_cli.py`)
-- Task type labeling: filter, group, summarize, query
+All 13 sprints have been completed. Sprint 13 features:
+- Embedding-based semantic similarity detection
+- Filters duplicate stories across different news sources
+- Uses OpenAI `text-embedding-3-small` (minimal cost: ~$0.004/month)
+- Configurable similarity threshold (default: 0.85)
+- SQLite persistence in `article_embeddings` table
+- Automatic cleanup of old embeddings
+
+### Semantic Deduplication Configuration
+```bash
+# Environment variables
+ENABLE_SEMANTIC_DEDUP=true          # Enable/disable (default: true)
+SIMILARITY_THRESHOLD=0.85           # Similarity threshold (0.0-1.0)
+DEDUP_LOOKBACK_DAYS=7              # Days to look back for duplicates
+EMBEDDING_RETENTION_DAYS=30         # Days to retain embeddings
+
+# Command line
+python src/main.py --output slack              # With semantic dedup (default)
+python src/main.py --output slack --no-semantic-dedup  # Without semantic dedup
+```
 
 ### Usage CLI Commands
 ```bash
@@ -248,4 +277,4 @@ python src/usage_cli.py costs         # Cost analysis
 python src/usage_cli.py export        # Export to CSV
 ```
 
-See `docs/sdp.md` and `docs/sprint-12-summary.md` for full sprint details.
+See `docs/sdp.md` for full sprint details.

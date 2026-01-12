@@ -10,6 +10,9 @@ flask-limiter>=3.5.0
 flask-talisman>=1.1.0
 flask-cors>=4.0.0
 
+# Semantic deduplication
+numpy>=1.24.0
+
 # Testing
 pytest>=7.0.0
 pytest-cov>=4.0.0
