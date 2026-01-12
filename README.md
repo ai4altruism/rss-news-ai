@@ -4,13 +4,13 @@
 
 ## Why This Exists
 
-The generative AI space moves fast. Hundreds of articles appear daily across tech blogs, news sites, and company announcements. Most are noise—rewritten press releases, speculation, or tangential mentions. Finding the signal requires reading everything, which doesn't scale.
+The generative AI space moves fast. Hundreds of articles appear daily across tech blogs, news sites, and company announcements. Most are noise, rewritten press releases, speculation, or tangential mentions. Finding the signal requires reading everything, which doesn't scale.
 
 This application solves that problem by using AI to curate AI news. It monitors RSS feeds, uses LLMs to identify genuinely relevant stories, groups related coverage into coherent topics, and delivers concise summaries to Slack, email, or a web dashboard.
 
 ## What Makes This Approach Different
 
-**LLM-powered filtering, not keyword matching.** Traditional news aggregators use keywords and rules. This app uses language models to understand context—distinguishing a breakthrough announcement from a think piece about AI ethics, or filtering out articles that merely mention "AI" in passing.
+**LLM-powered filtering, not keyword matching.** Traditional news aggregators use keywords and rules. This app uses language models to understand context, distinguishing a breakthrough announcement from a think piece about AI ethics, or filtering out articles that merely mention "AI" in passing.
 
 **Multi-provider architecture.** Not locked into one vendor. Mix and match OpenAI, Anthropic Claude, Google Gemini, and xAI Grok for different tasks. Use a fast, cheap model for filtering hundreds of articles, and a more capable model for generating summaries.
 
@@ -563,7 +563,7 @@ When using or distributing this software, please attribute as follows:
 
 ```
 RSS AI News Feed Monitor
-Copyright (c) 2025 AI for Altruism Inc
+Copyright (c) 2026 AI for Altruism Inc
 License: GNU GPL v3.0
 ```
 
