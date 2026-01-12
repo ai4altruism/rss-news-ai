@@ -37,6 +37,7 @@ RSS News AI is a Python-based application that monitors RSS feeds for generative
 | Sprint 10: Google Gemini Integration | 2 weeks | **Complete** | 2026-01-10 |
 | Sprint 11: Provider Testing & Hardening | 1 week | **Complete** | 2026-01-11 |
 | Sprint 12: Token Usage Monitoring | 1 week | **Complete** | 2026-01-12 |
+| Sprint 13: Semantic Deduplication | 1 week | Planned | - |
 
 ## 2. Team and Resources
 
@@ -1118,6 +1119,256 @@ For `call_llm()` users (most code), no changes needed as it still returns `str`.
 
 ---
 
+### Sprint 13: Semantic Deduplication (PLANNED)
+**Goal**: Reduce repetitive content across hourly updates by using embedding-based similarity detection to filter semantically duplicate articles before LLM processing.
+
+**Duration**: 1 week
+**Status**: Planned
+
+#### Problem Statement
+The current deduplication in `article_history.py` uses exact URL matching. This misses:
+- Same story from different sources (different URLs)
+- Updated/rewritten stories with new URLs
+- Similar coverage of the same news event
+
+Result: Users see repetitive content across hourly updates.
+
+#### Solution: Embedding-Based Similarity
+Use OpenAI's text-embedding API to generate semantic fingerprints of articles (title + lead sentence), store them in SQLite, and filter new articles that are too similar to recent ones.
+
+#### Requirements Addressed
+| ID | Requirement | Priority |
+|----|-------------|----------|
+| FR-13.1 | Generate embeddings for article title + lead sentence | Must Have |
+| FR-13.2 | Store embeddings in SQLite with article metadata | Must Have |
+| FR-13.3 | Compare new articles against recent embeddings (7 days) | Must Have |
+| FR-13.4 | Filter articles exceeding similarity threshold (default 0.85) | Must Have |
+| FR-13.5 | Configurable similarity threshold via environment variable | Should Have |
+| FR-13.6 | Track embedding API usage in llm_usage table | Should Have |
+| FR-13.7 | CLI command to analyze duplicate detection stats | Could Have |
+
+#### Task Breakdown
+| Task ID | Task | Effort | Dependencies | Requirement |
+|---------|------|--------|--------------|-------------|
+| S13-1 | Design `article_embeddings` table schema | S | None | FR-13.2 |
+| S13-2 | Add table creation to `history_db.py` | S | S13-1 | FR-13.2 |
+| S13-3 | Create `src/embeddings.py` module | M | None | FR-13.1 |
+| S13-4 | Implement `generate_embedding()` using OpenAI API | M | S13-3 | FR-13.1 |
+| S13-5 | Implement `get_embedding_text()` (title + lead extraction) | S | S13-3 | FR-13.1 |
+| S13-6 | Implement `store_embedding()` in history_db.py | M | S13-2 | FR-13.2 |
+| S13-7 | Implement `get_recent_embeddings()` (last N days) | M | S13-2 | FR-13.3 |
+| S13-8 | Implement `cosine_similarity()` using numpy | S | S13-3 | FR-13.3 |
+| S13-9 | Implement `find_similar_articles()` batch comparison | M | S13-7, S13-8 | FR-13.3 |
+| S13-10 | Implement `filter_semantic_duplicates()` main function | L | S13-9 | FR-13.4 |
+| S13-11 | Add `SIMILARITY_THRESHOLD` environment variable | S | S13-10 | FR-13.5 |
+| S13-12 | Integrate into `main.py` pipeline before LLM filtering | M | S13-10 | FR-13.4 |
+| S13-13 | Track embedding API calls in llm_usage table | M | S13-4 | FR-13.6 |
+| S13-14 | Write unit tests for embeddings module | L | S13-3-S13-10 | - |
+| S13-15 | Write integration tests for deduplication pipeline | M | S13-12 | - |
+| S13-16 | Update README with deduplication documentation | S | S13-12 | - |
+| S13-17 | Add deduplication stats to history_cli.py (optional) | M | S13-12 | FR-13.7 |
+
+**Effort Key**: S = 2-4h, M = 4-8h, L = 8-16h
+
+#### Database Schema
+
+```sql
+-- Store article embeddings for semantic similarity comparison
+CREATE TABLE IF NOT EXISTS article_embeddings (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    url TEXT UNIQUE NOT NULL,
+    title TEXT NOT NULL,
+    lead_text TEXT,                    -- First sentence of summary
+    embedding BLOB NOT NULL,           -- numpy array as bytes (1536 floats)
+    embedding_model TEXT DEFAULT 'text-embedding-3-small',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Index for efficient date-based queries
+CREATE INDEX IF NOT EXISTS idx_embeddings_created ON article_embeddings(created_at);
+CREATE INDEX IF NOT EXISTS idx_embeddings_url ON article_embeddings(url);
+```
+
+#### Architecture
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                     RSS Feed Reader                              │
+│                   (fetch new articles)                           │
+└─────────────────────┬───────────────────────────────────────────┘
+                      │
+                      ▼
+┌─────────────────────────────────────────────────────────────────┐
+│              article_history.py (existing)                       │
+│              Filter exact URL duplicates                         │
+└─────────────────────┬───────────────────────────────────────────┘
+                      │
+                      ▼
+┌─────────────────────────────────────────────────────────────────┐
+│              embeddings.py (NEW)                                 │
+│  1. Extract title + lead sentence                                │
+│  2. Generate embeddings via OpenAI API                           │
+│  3. Compare against recent embeddings (last 7 days)              │
+│  4. Filter articles with similarity > threshold                  │
+│  5. Store new embeddings for future comparison                   │
+└─────────────────────┬───────────────────────────────────────────┘
+                      │
+                      ▼
+┌─────────────────────────────────────────────────────────────────┐
+│              LLM Filter (existing)                               │
+│              Filter by relevance using LLM                       │
+└─────────────────────────────────────────────────────────────────┘
+                      │
+                      ▼
+┌─────────────────────────────────────────────────────────────────┐
+│              Summarizer (existing)                               │
+│              Group and summarize topics                          │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+#### Embedding Text Format
+
+```python
+def get_embedding_text(article: dict) -> str:
+    """
+    Extract text for embedding: title + lead sentence.
+
+    Args:
+        article: Article dict with 'title' and 'summary' fields
+
+    Returns:
+        Combined text for embedding (50-100 tokens typical)
+    """
+    title = article.get("title", "").strip()
+    summary = article.get("summary", "").strip()
+
+    # Extract first sentence from summary
+    if summary:
+        # Handle common sentence endings
+        for delimiter in [". ", ".\n", ".\t"]:
+            if delimiter in summary:
+                lead = summary.split(delimiter)[0] + "."
+                break
+        else:
+            # No sentence boundary found, take first 200 chars
+            lead = summary[:200]
+    else:
+        lead = ""
+
+    return f"{title}. {lead}" if lead else title
+```
+
+#### Similarity Comparison
+
+```python
+import numpy as np
+
+def cosine_similarity(a: np.ndarray, b: np.ndarray) -> float:
+    """Compute cosine similarity between two vectors."""
+    return np.dot(a, b) / (np.linalg.norm(a) * np.linalg.norm(b))
+
+def find_similar_articles(
+    new_embedding: np.ndarray,
+    recent_embeddings: list[tuple[str, np.ndarray]],
+    threshold: float = 0.85
+) -> list[tuple[str, float]]:
+    """
+    Find articles similar to the new embedding.
+
+    Returns:
+        List of (url, similarity_score) for articles exceeding threshold
+    """
+    similar = []
+    for url, stored_embedding in recent_embeddings:
+        similarity = cosine_similarity(new_embedding, stored_embedding)
+        if similarity >= threshold:
+            similar.append((url, similarity))
+    return similar
+```
+
+#### Configuration
+
+```bash
+# .env additions
+# Similarity threshold for deduplication (0.0 to 1.0)
+# Higher = more strict (fewer duplicates caught)
+# Lower = more aggressive (may filter distinct stories)
+SIMILARITY_THRESHOLD=0.85
+
+# Number of days to look back for duplicate comparison
+DEDUP_LOOKBACK_DAYS=7
+
+# Embedding model (OpenAI)
+EMBEDDING_MODEL=text-embedding-3-small
+```
+
+#### Cost Analysis
+
+| Component | Tokens | Cost |
+|-----------|--------|------|
+| Title + lead per article | ~60 tokens | - |
+| 100 articles per day | 6,000 tokens | $0.0001 |
+| 3,000 articles per month | 180,000 tokens | $0.0036 |
+| **Monthly embedding cost** | - | **< $0.01** |
+
+Storage: ~6KB per article embedding (1,536 floats × 4 bytes)
+- 3,000 articles/month = ~18MB/month
+
+#### Deliverables
+- `src/embeddings.py` - Embedding generation and similarity comparison
+- Updated `src/history_db.py` - `article_embeddings` table and query functions
+- Updated `src/main.py` - Integration into processing pipeline
+- Updated `.env.example` - New configuration variables
+- Unit tests: 15+ new tests
+- Integration tests: 5+ new tests
+- README documentation for deduplication feature
+
+#### Testing Milestones
+- Day 2: Database schema and embedding generation tests complete
+- Day 4: Similarity comparison and filtering tests complete
+- Day 6: Pipeline integration and end-to-end tests complete
+- Day 7: Documentation complete, ready for merge
+
+#### Success Criteria
+- [ ] Embeddings generated for all new articles (title + lead)
+- [ ] Embeddings stored in SQLite with proper indexing
+- [ ] Semantic duplicates filtered before LLM processing
+- [ ] Configurable similarity threshold
+- [ ] Embedding API costs tracked in llm_usage table
+- [ ] All existing tests still passing
+- [ ] 20+ new tests added
+- [ ] Documentation complete
+
+#### Git Operations
+```bash
+# Create feature branch
+git checkout -b feature/sprint-13-semantic-deduplication
+
+# Daily commits
+git commit -m "feat(embeddings): add article_embeddings table schema"
+git commit -m "feat(embeddings): implement embedding generation"
+git commit -m "feat(embeddings): add similarity comparison"
+git commit -m "feat(embeddings): integrate into main pipeline"
+
+# Create PR
+gh pr create --title "Sprint 13: Semantic Deduplication" --body "..."
+```
+
+#### Dependencies
+- **New**: numpy (for cosine similarity)
+- **Existing**: OpenAI API (for embeddings)
+- **Prerequisite**: Sprint 12 complete (usage tracking)
+
+#### Risks and Mitigations
+| Risk | Mitigation |
+|------|------------|
+| Embedding API latency | Batch embedding requests, async processing |
+| False positives (distinct stories filtered) | Tunable threshold, logging of filtered articles |
+| Storage growth | Automatic cleanup of embeddings older than retention period |
+| OpenAI embedding API changes | Abstract embedding provider, version pin |
+
+---
+
 ## 7. Risk Management
 
 ### 7.1 Identified Risks
@@ -1314,6 +1565,7 @@ def get_provider(model_config: str) -> BaseProvider:
 | Sprint 10 | 199 | 17 | 216 |
 | Sprint 11 | 216 | 45 | 261 |
 | Sprint 12 | 261 | 24 | 285 |
+| Sprint 13 | 285 | 20 | 305 |
 
 ### C. Provider API Reference
 | Provider | API Documentation | Key Differences |
@@ -1387,8 +1639,9 @@ Total LLM call points: **4** (all in critical paths)
 
 ## Summary
 
-This Software Development Plan documents the completed work from Sprints 1-12. All sprints are now complete:
+This Software Development Plan documents Sprints 1-13. Sprints 1-12 are complete; Sprint 13 is planned.
 
+**Completed:**
 1. **Sprints 1-6**: Core features (database, CLI, LLM query, web UI, security)
 2. **Sprint 7**: Provider abstraction layer with backward compatibility
 3. **Sprint 8**: xAI Grok integration (OpenAI-compatible)
@@ -1396,6 +1649,9 @@ This Software Development Plan documents the completed work from Sprints 1-12. A
 5. **Sprint 10**: Google Gemini integration (Generative Language API)
 6. **Sprint 11**: Comprehensive cross-provider testing and documentation
 7. **Sprint 12**: Token usage monitoring with cost tracking
+
+**Planned:**
+8. **Sprint 13**: Semantic deduplication using embeddings
 
 The design achieved:
 - **Backward compatibility**: Existing configurations continue to work
