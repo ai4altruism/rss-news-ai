@@ -3,7 +3,7 @@
 import logging
 import json
 import re
-from utils import call_responses_api
+from utils import call_llm
 
 def sanitize_json_string(json_string):
     """
@@ -129,13 +129,14 @@ Here are the articles in this batch:
 """.strip()
 
         try:
-            output_text = call_responses_api(
-                model=filter_model,
+            output_text = call_llm(
+                model_config=filter_model,
                 prompt=prompt,
-                openai_api_key=openai_api_key,
+                api_keys={"openai": openai_api_key},
                 instructions="Output only valid JSON. No extra commentary.",
-                max_output_tokens=1024,  # Increase token limit
-                temperature=0.0
+                max_tokens=1024,  # Increase token limit
+                temperature=0.0,
+                task_type="filter"
             )
 
             # Attempt direct JSON parse

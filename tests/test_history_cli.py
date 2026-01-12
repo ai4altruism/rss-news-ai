@@ -245,7 +245,7 @@ class TestCliNaturalLanguageQuery:
 class TestCliQueryWithMockedApi:
     """Tests for CLI query command with mocked API."""
 
-    @patch('query_engine.call_responses_api')
+    @patch('query_engine.call_llm')
     def test_cli_query_natural_language(self, mock_api, populated_db):
         """Query command should work with mocked API."""
         # This test imports and uses the CLI module directly to allow mocking
@@ -273,7 +273,7 @@ class TestCliQueryWithMockedApi:
         # Should succeed
         assert result == 0 or result is None
 
-    @patch('query_engine.call_responses_api')
+    @patch('query_engine.call_llm')
     def test_cli_query_json_output(self, mock_api, populated_db):
         """Query command should support JSON output format."""
         import history_cli

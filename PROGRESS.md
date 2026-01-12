@@ -1,7 +1,7 @@
 # Development Progress
 
 **Last Updated:** 2026-01-12
-**Last Session:** Sprint 12 (Token Usage Monitoring) - Started
+**Last Session:** Sprint 12 (Token Usage Monitoring) - Complete
 
 ## Current State
 
@@ -47,17 +47,20 @@ docker run -d \
 | 9 | Anthropic Claude Integration | 15 | ✅ Complete |
 | 10 | Google Gemini Integration | 17 | ✅ Complete |
 | 11 | Provider Testing & Hardening | 45 | ✅ Complete |
-| **12** | **Token Usage Monitoring** | **24** | 🚧 **In Progress** |
+| **12** | **Token Usage Monitoring** | **24** | ✅ Complete |
 
-**Total Tests:** 284 passing
+**Total Tests:** 285 passing
 
-### Sprint 12 Deliverables (In Progress)
+### Sprint 12 Deliverables (Complete)
 - `src/history_db.py` - `llm_usage` table schema and query functions
 - `src/providers/base.py` - `LLMUsageMetadata` dataclass
 - `src/pricing.py` - Provider pricing and cost estimation
 - Updated provider implementations - Token usage extraction
-- `src/utils.py` - Usage logging in `call_llm()`
+- `src/utils.py` - Usage logging in `call_llm()` with `task_type` parameter
 - `src/usage_cli.py` - CLI tool for usage reporting
+- Updated `src/llm_filter.py` - Uses `call_llm()` with `task_type="filter"`
+- Updated `src/summarizer.py` - Uses `call_llm()` with `task_type="group"` and `task_type="summarize"`
+- Updated `src/query_engine.py` - Uses `call_llm()` with `task_type="query"`
 
 ### Sprint 11 Deliverables (Complete)
 - `tests/test_cross_provider.py` - 45 cross-provider integration tests
@@ -201,9 +204,24 @@ _log_usage() → saves to llm_usage table (non-fatal)
 
 ## Current Sprint
 
-**Sprint 12: Token Usage Monitoring**
-- Track token usage, costs, and response times for all LLM calls
-- Persist to SQLite database
-- CLI tool for usage reporting and analysis
+**Sprint 12: Token Usage Monitoring** ✅ Complete
+
+All Sprint 12 features implemented:
+- Token usage tracking across all 4 providers
+- Cost estimation based on provider pricing
+- Response time tracking
+- SQLite persistence in `llm_usage` table
+- CLI tool for usage reporting (`src/usage_cli.py`)
+- Task type labeling: filter, group, summarize, query
+
+### Usage CLI Commands
+```bash
+python src/usage_cli.py stats         # Overall statistics
+python src/usage_cli.py by-provider   # Breakdown by provider
+python src/usage_cli.py by-task       # Breakdown by task type
+python src/usage_cli.py by-model      # Breakdown by model
+python src/usage_cli.py costs         # Cost analysis
+python src/usage_cli.py export        # Export to CSV
+```
 
 See `docs/sdp.md` and `docs/sprint-12-summary.md` for full sprint details.

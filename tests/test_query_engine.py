@@ -254,7 +254,7 @@ class TestExecuteSafeSql:
 class TestQueryClassification:
     """Tests for query classification with mocked LLM responses."""
 
-    @patch('query_engine.call_responses_api')
+    @patch('query_engine.call_llm')
     def test_classify_trends_query(self, mock_api, populated_db, mock_api_key):
         """Trends queries should be classified correctly."""
         # Mock LLM response
@@ -275,7 +275,7 @@ class TestQueryClassification:
         assert result["query_type"] == "trends"
         assert mock_api.called
 
-    @patch('query_engine.call_responses_api')
+    @patch('query_engine.call_llm')
     def test_classify_comparison_query(self, mock_api, populated_db, mock_api_key):
         """Comparison queries should be classified correctly."""
         mock_api.return_value = json.dumps({
@@ -298,7 +298,7 @@ class TestQueryClassification:
         assert "period1" in result["data"]
         assert "period2" in result["data"]
 
-    @patch('query_engine.call_responses_api')
+    @patch('query_engine.call_llm')
     def test_classify_search_query(self, mock_api, populated_db, mock_api_key):
         """Search queries should be classified correctly."""
         mock_api.return_value = json.dumps({
@@ -319,7 +319,7 @@ class TestQueryClassification:
         # Should find our test OpenAI data
         assert len(result["data"]) > 0
 
-    @patch('query_engine.call_responses_api')
+    @patch('query_engine.call_llm')
     def test_classify_complex_query(self, mock_api, populated_db, mock_api_key):
         """Complex queries should use custom SQL."""
         mock_api.return_value = json.dumps({
@@ -338,7 +338,7 @@ class TestQueryClassification:
         assert result["query_type"] == "custom"
         assert isinstance(result["data"], list)
 
-    @patch('query_engine.call_responses_api')
+    @patch('query_engine.call_llm')
     def test_classification_handles_malformed_response(self, mock_api, populated_db, mock_api_key):
         """Should handle malformed LLM responses gracefully."""
         mock_api.return_value = "This is not valid JSON"
@@ -350,7 +350,7 @@ class TestQueryClassification:
         assert not result["success"]
         assert "couldn't understand" in result["response"].lower() or "error" in result["response"].lower()
 
-    @patch('query_engine.call_responses_api')
+    @patch('query_engine.call_llm')
     def test_classification_handles_api_error(self, mock_api, populated_db, mock_api_key):
         """Should handle API errors gracefully."""
         mock_api.side_effect = Exception("API rate limit exceeded")
@@ -369,7 +369,7 @@ class TestQueryClassification:
 class TestResponseFormatting:
     """Tests for response formatting."""
 
-    @patch('query_engine.call_responses_api')
+    @patch('query_engine.call_llm')
     def test_response_includes_article_urls(self, mock_api, populated_db, mock_api_key):
         """Search responses should include article URLs."""
         mock_api.return_value = json.dumps({
@@ -397,7 +397,7 @@ class TestResponseFormatting:
         response_text = result["response"]
         assert "https://" in response_text
 
-    @patch('query_engine.call_responses_api')
+    @patch('query_engine.call_llm')
     def test_trends_response_includes_article_urls(self, mock_api, populated_db, mock_api_key):
         """Trends responses should include article URLs."""
         mock_api.return_value = json.dumps({
@@ -457,7 +457,7 @@ class TestQueryEngineInit:
 class TestQueryFunction:
     """Tests for the query() convenience function."""
 
-    @patch('query_engine.call_responses_api')
+    @patch('query_engine.call_llm')
     def test_query_function_works(self, mock_api, populated_db, mock_api_key):
         """The query() convenience function should work."""
         mock_api.return_value = json.dumps({

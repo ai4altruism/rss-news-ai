@@ -3,7 +3,7 @@
 import logging
 import json
 import re
-from utils import call_responses_api
+from utils import call_llm
 
 def sanitize_json_string(json_string):
     """
@@ -178,13 +178,14 @@ Here are the articles to group:
 
         try:
             # Call the new Responses API for grouping
-            group_raw_output = call_responses_api(
-                model=group_model,
+            group_raw_output = call_llm(
+                model_config=group_model,
                 prompt=group_prompt,
-                openai_api_key=openai_api_key,
+                api_keys={"openai": openai_api_key},
                 instructions="You are a JSON formatting expert who organizes articles into topics about generative AI.",
-                max_output_tokens=4000,  # Increase token limit
-                temperature=0.0  # Keep at 0 for most deterministic output
+                max_tokens=4000,
+                temperature=0.0,
+                task_type="group"
             )
 
             # Attempt direct JSON parse
@@ -261,13 +262,14 @@ RESPONSE FORMAT: Just one short paragraph.
 """
 
         try:
-            summary_text = call_responses_api(
-                model=summarize_model,
+            summary_text = call_llm(
+                model_config=summarize_model,
                 prompt=summarize_prompt,
-                openai_api_key=openai_api_key,
+                api_keys={"openai": openai_api_key},
                 instructions="You create brief, informative summaries of generative AI news articles in a single paragraph.",
-                max_output_tokens=250,
-                temperature=0.5
+                max_tokens=250,
+                temperature=0.5,
+                task_type="summarize"
             )
 
             # Basic cleanup

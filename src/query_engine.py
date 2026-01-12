@@ -13,7 +13,7 @@ from typing import Optional, Dict, Any, List, Tuple
 from datetime import datetime, timedelta
 from dotenv import dotenv_values
 
-from utils import call_responses_api
+from utils import call_llm
 from history_db import (
     get_db_path,
     get_db_connection,
@@ -354,13 +354,14 @@ IMPORTANT: Only use execute_sql when the other functions cannot answer the quest
 
         try:
             # Call LLM to classify query
-            response = call_responses_api(
-                model=self.model,
+            response = call_llm(
+                model_config=self.model,
                 prompt=prompt,
-                openai_api_key=self.api_key,
+                api_keys={"openai": self.api_key},
                 instructions="You classify database queries and extract parameters. Always respond with valid JSON.",
-                max_output_tokens=1000,
-                temperature=0.0
+                max_tokens=1000,
+                temperature=0.0,
+                task_type="query"
             )
 
             # Parse LLM response
