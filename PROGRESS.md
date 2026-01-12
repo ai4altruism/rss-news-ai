@@ -12,8 +12,8 @@
 
 ### Production Deployment (dive02)
 - **Container:** `a4a-ai-news` running on dive02
-- **Image:** `rss-news-ai:v2.1` (Sprint 12 - token usage monitoring)
-- **Status:** Running in production (pending upgrade to v2.2)
+- **Image:** `rss-news-ai:v2.2` (Sprint 13 - semantic deduplication)
+- **Status:** Running in production
 - **Config location:** `~/a4a-ai-news/.env`
 
 **Current .env model configuration:**

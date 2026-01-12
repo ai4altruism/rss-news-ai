@@ -1669,6 +1669,7 @@ Users can configure any combination of OpenAI, xAI, Anthropic, and Google models
 
 | Version | Date | Highlights |
 |---------|------|------------|
+| v2.2 | 2026-01-12 | Semantic deduplication using embeddings, 321 tests |
 | v2.1 | 2026-01-12 | Token usage monitoring, cost tracking, 285 tests |
 | v2.0 | 2026-01-11 | Multi-provider LLM support (Sprints 7-11) |
 | v1.0 | 2025-12-14 | Core features complete (Sprints 1-6) |

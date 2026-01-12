@@ -451,10 +451,10 @@ curl -X POST http://localhost:5002/api/query \
 
 ```bash
 # Standard build
-docker build -t rss-news-ai:v2.1 .
+docker build -t rss-news-ai:v2.2 .
 
 # Cross-platform build (e.g., from Mac to Linux AMD64)
-docker buildx build --platform linux/amd64 -t rss-news-ai:v2.1 --load .
+docker buildx build --platform linux/amd64 -t rss-news-ai:v2.2 --load .
 ```
 
 ### Run with Volume Mounts
@@ -474,7 +474,7 @@ docker run -d \
   -v /var/lib/rss-news-ai/logs:/app/logs \
   -v ~/a4a-ai-news/.env:/app/.env:ro \
   --entrypoint python \
-  rss-news-ai:v2.1 \
+  rss-news-ai:v2.2 \
   src/scheduler.py --output slack
 
 # Run with web dashboard exposed
@@ -484,7 +484,7 @@ docker run -d \
   -v /var/lib/rss-news-ai/logs:/app/logs \
   -p 5002:5002 \
   --env-file .env \
-  rss-news-ai:v2.1 --output web
+  rss-news-ai:v2.2 --output web
 ```
 
 ### Access Database from Host
