@@ -61,6 +61,27 @@ CREATE INDEX IF NOT EXISTS idx_topics_summary_id ON topics(summary_id);
 CREATE INDEX IF NOT EXISTS idx_topics_normalized_name ON topics(normalized_name);
 CREATE INDEX IF NOT EXISTS idx_articles_topic_id ON articles(topic_id);
 CREATE INDEX IF NOT EXISTS idx_articles_link ON articles(link);
+
+-- LLM usage tracking (Sprint 12)
+CREATE TABLE IF NOT EXISTS llm_usage (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    timestamp TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    provider TEXT NOT NULL,           -- 'openai', 'xai', 'anthropic', 'google'
+    model TEXT NOT NULL,              -- 'gpt-4o-mini', 'grok-3', etc.
+    task_type TEXT NOT NULL,          -- 'filter', 'group', 'summarize', 'query'
+    input_tokens INTEGER NOT NULL DEFAULT 0,
+    output_tokens INTEGER NOT NULL DEFAULT 0,
+    total_tokens INTEGER NOT NULL DEFAULT 0,
+    cost_usd REAL,                    -- Estimated cost in USD
+    response_time_ms INTEGER,         -- Response time in milliseconds
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Indexes for usage queries
+CREATE INDEX IF NOT EXISTS idx_llm_usage_timestamp ON llm_usage(timestamp);
+CREATE INDEX IF NOT EXISTS idx_llm_usage_provider ON llm_usage(provider);
+CREATE INDEX IF NOT EXISTS idx_llm_usage_task_type ON llm_usage(task_type);
+CREATE INDEX IF NOT EXISTS idx_llm_usage_model ON llm_usage(model);
 """
 
 
@@ -1023,3 +1044,349 @@ def export_data_json(
     except Exception as e:
         logging.error(f"Failed to export JSON: {e}")
         return {"error": str(e)}
+
+
+# =============================================================================
+# LLM Usage Tracking (Sprint 12)
+# =============================================================================
+
+def save_llm_usage(
+    provider: str,
+    model: str,
+    task_type: str,
+    input_tokens: int,
+    output_tokens: int,
+    total_tokens: int,
+    cost_usd: Optional[float] = None,
+    response_time_ms: Optional[int] = None,
+    db_path: Optional[str] = None
+) -> Optional[int]:
+    """
+    Save LLM usage metrics to the database.
+
+    Parameters:
+        provider: Provider name ('openai', 'xai', 'anthropic', 'google')
+        model: Model name ('gpt-4o-mini', 'grok-3', etc.)
+        task_type: Task type ('filter', 'group', 'summarize', 'query')
+        input_tokens: Number of input tokens
+        output_tokens: Number of output tokens
+        total_tokens: Total tokens (input + output)
+        cost_usd: Estimated cost in USD (optional)
+        response_time_ms: Response time in milliseconds (optional)
+        db_path: Path to database file.
+
+    Returns:
+        The usage record ID if successful, None otherwise.
+    """
+    try:
+        with get_db_connection(db_path) as conn:
+            cursor = conn.execute(
+                """INSERT INTO llm_usage
+                   (provider, model, task_type, input_tokens, output_tokens,
+                    total_tokens, cost_usd, response_time_ms)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                (provider, model, task_type, input_tokens, output_tokens,
+                 total_tokens, cost_usd, response_time_ms)
+            )
+            conn.commit()
+            return cursor.lastrowid
+
+    except Exception as e:
+        logging.error(f"Failed to save LLM usage: {e}")
+        return None
+
+
+def get_usage_stats(db_path: Optional[str] = None) -> Dict[str, Any]:
+    """
+    Get overall LLM usage statistics.
+
+    Parameters:
+        db_path: Path to database file.
+
+    Returns:
+        Dict with total_calls, total_tokens, total_cost, etc.
+    """
+    try:
+        with get_db_connection(db_path, readonly=True) as conn:
+            cursor = conn.execute(
+                """SELECT
+                    COUNT(*) as total_calls,
+                    COALESCE(SUM(input_tokens), 0) as total_input_tokens,
+                    COALESCE(SUM(output_tokens), 0) as total_output_tokens,
+                    COALESCE(SUM(total_tokens), 0) as total_tokens,
+                    COALESCE(SUM(cost_usd), 0) as total_cost_usd,
+                    COALESCE(AVG(response_time_ms), 0) as avg_response_time_ms,
+                    MIN(timestamp) as first_call,
+                    MAX(timestamp) as last_call
+                FROM llm_usage"""
+            )
+            row = cursor.fetchone()
+            if row:
+                return dict(row)
+            return {}
+
+    except Exception as e:
+        logging.error(f"Failed to get usage stats: {e}")
+        return {}
+
+
+def get_usage_by_provider(
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    db_path: Optional[str] = None
+) -> List[Dict[str, Any]]:
+    """
+    Get LLM usage statistics grouped by provider.
+
+    Parameters:
+        start_date: Optional start date filter (YYYY-MM-DD)
+        end_date: Optional end date filter (YYYY-MM-DD)
+        db_path: Path to database file.
+
+    Returns:
+        List of dicts with provider, call_count, total_tokens, total_cost.
+    """
+    try:
+        with get_db_connection(db_path, readonly=True) as conn:
+            sql = """SELECT
+                        provider,
+                        COUNT(*) as call_count,
+                        COALESCE(SUM(input_tokens), 0) as input_tokens,
+                        COALESCE(SUM(output_tokens), 0) as output_tokens,
+                        COALESCE(SUM(total_tokens), 0) as total_tokens,
+                        COALESCE(SUM(cost_usd), 0) as total_cost_usd,
+                        COALESCE(AVG(response_time_ms), 0) as avg_response_time_ms
+                    FROM llm_usage
+                    WHERE 1=1"""
+
+            params = []
+            if start_date:
+                sql += " AND date(timestamp) >= date(?)"
+                params.append(start_date)
+            if end_date:
+                sql += " AND date(timestamp) <= date(?)"
+                params.append(end_date)
+
+            sql += " GROUP BY provider ORDER BY total_cost_usd DESC"
+
+            cursor = conn.execute(sql, params)
+            return [dict(row) for row in cursor.fetchall()]
+
+    except Exception as e:
+        logging.error(f"Failed to get usage by provider: {e}")
+        return []
+
+
+def get_usage_by_task_type(
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    db_path: Optional[str] = None
+) -> List[Dict[str, Any]]:
+    """
+    Get LLM usage statistics grouped by task type.
+
+    Parameters:
+        start_date: Optional start date filter (YYYY-MM-DD)
+        end_date: Optional end date filter (YYYY-MM-DD)
+        db_path: Path to database file.
+
+    Returns:
+        List of dicts with task_type, call_count, total_tokens, total_cost.
+    """
+    try:
+        with get_db_connection(db_path, readonly=True) as conn:
+            sql = """SELECT
+                        task_type,
+                        COUNT(*) as call_count,
+                        COALESCE(SUM(input_tokens), 0) as input_tokens,
+                        COALESCE(SUM(output_tokens), 0) as output_tokens,
+                        COALESCE(SUM(total_tokens), 0) as total_tokens,
+                        COALESCE(SUM(cost_usd), 0) as total_cost_usd,
+                        COALESCE(AVG(response_time_ms), 0) as avg_response_time_ms
+                    FROM llm_usage
+                    WHERE 1=1"""
+
+            params = []
+            if start_date:
+                sql += " AND date(timestamp) >= date(?)"
+                params.append(start_date)
+            if end_date:
+                sql += " AND date(timestamp) <= date(?)"
+                params.append(end_date)
+
+            sql += " GROUP BY task_type ORDER BY total_cost_usd DESC"
+
+            cursor = conn.execute(sql, params)
+            return [dict(row) for row in cursor.fetchall()]
+
+    except Exception as e:
+        logging.error(f"Failed to get usage by task type: {e}")
+        return []
+
+
+def get_usage_by_model(
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    db_path: Optional[str] = None
+) -> List[Dict[str, Any]]:
+    """
+    Get LLM usage statistics grouped by model.
+
+    Parameters:
+        start_date: Optional start date filter (YYYY-MM-DD)
+        end_date: Optional end date filter (YYYY-MM-DD)
+        db_path: Path to database file.
+
+    Returns:
+        List of dicts with provider, model, call_count, total_tokens, total_cost.
+    """
+    try:
+        with get_db_connection(db_path, readonly=True) as conn:
+            sql = """SELECT
+                        provider,
+                        model,
+                        COUNT(*) as call_count,
+                        COALESCE(SUM(input_tokens), 0) as input_tokens,
+                        COALESCE(SUM(output_tokens), 0) as output_tokens,
+                        COALESCE(SUM(total_tokens), 0) as total_tokens,
+                        COALESCE(SUM(cost_usd), 0) as total_cost_usd,
+                        COALESCE(AVG(response_time_ms), 0) as avg_response_time_ms
+                    FROM llm_usage
+                    WHERE 1=1"""
+
+            params = []
+            if start_date:
+                sql += " AND date(timestamp) >= date(?)"
+                params.append(start_date)
+            if end_date:
+                sql += " AND date(timestamp) <= date(?)"
+                params.append(end_date)
+
+            sql += " GROUP BY provider, model ORDER BY total_cost_usd DESC"
+
+            cursor = conn.execute(sql, params)
+            return [dict(row) for row in cursor.fetchall()]
+
+    except Exception as e:
+        logging.error(f"Failed to get usage by model: {e}")
+        return []
+
+
+def get_usage_by_date(
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    db_path: Optional[str] = None
+) -> List[Dict[str, Any]]:
+    """
+    Get LLM usage statistics grouped by date.
+
+    Parameters:
+        start_date: Optional start date filter (YYYY-MM-DD)
+        end_date: Optional end date filter (YYYY-MM-DD)
+        db_path: Path to database file.
+
+    Returns:
+        List of dicts with date, call_count, total_tokens, total_cost.
+    """
+    try:
+        with get_db_connection(db_path, readonly=True) as conn:
+            sql = """SELECT
+                        date(timestamp) as date,
+                        COUNT(*) as call_count,
+                        COALESCE(SUM(input_tokens), 0) as input_tokens,
+                        COALESCE(SUM(output_tokens), 0) as output_tokens,
+                        COALESCE(SUM(total_tokens), 0) as total_tokens,
+                        COALESCE(SUM(cost_usd), 0) as total_cost_usd,
+                        COALESCE(AVG(response_time_ms), 0) as avg_response_time_ms
+                    FROM llm_usage
+                    WHERE 1=1"""
+
+            params = []
+            if start_date:
+                sql += " AND date(timestamp) >= date(?)"
+                params.append(start_date)
+            if end_date:
+                sql += " AND date(timestamp) <= date(?)"
+                params.append(end_date)
+
+            sql += " GROUP BY date(timestamp) ORDER BY date DESC"
+
+            cursor = conn.execute(sql, params)
+            return [dict(row) for row in cursor.fetchall()]
+
+    except Exception as e:
+        logging.error(f"Failed to get usage by date: {e}")
+        return []
+
+
+def export_usage_csv(
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    db_path: Optional[str] = None
+) -> str:
+    """
+    Export LLM usage data as CSV.
+
+    Parameters:
+        start_date: Optional start date filter (YYYY-MM-DD)
+        end_date: Optional end date filter (YYYY-MM-DD)
+        db_path: Path to database file.
+
+    Returns:
+        CSV string with headers.
+    """
+    try:
+        with get_db_connection(db_path, readonly=True) as conn:
+            sql = """SELECT
+                        timestamp, provider, model, task_type,
+                        input_tokens, output_tokens, total_tokens,
+                        cost_usd, response_time_ms
+                    FROM llm_usage
+                    WHERE 1=1"""
+
+            params = []
+            if start_date:
+                sql += " AND date(timestamp) >= date(?)"
+                params.append(start_date)
+            if end_date:
+                sql += " AND date(timestamp) <= date(?)"
+                params.append(end_date)
+
+            sql += " ORDER BY timestamp DESC"
+
+            cursor = conn.execute(sql, params)
+            rows = cursor.fetchall()
+
+            # Build CSV
+            import csv
+            import io
+
+            output = io.StringIO()
+            writer = csv.writer(output)
+
+            # Header
+            writer.writerow([
+                'timestamp', 'provider', 'model', 'task_type',
+                'input_tokens', 'output_tokens', 'total_tokens',
+                'cost_usd', 'response_time_ms'
+            ])
+
+            # Data rows
+            for row in rows:
+                writer.writerow([
+                    row['timestamp'],
+                    row['provider'],
+                    row['model'],
+                    row['task_type'],
+                    row['input_tokens'],
+                    row['output_tokens'],
+                    row['total_tokens'],
+                    row['cost_usd'] or '',
+                    row['response_time_ms'] or ''
+                ])
+
+            return output.getvalue()
+
+    except Exception as e:
+        logging.error(f"Failed to export usage CSV: {e}")
+        return ""

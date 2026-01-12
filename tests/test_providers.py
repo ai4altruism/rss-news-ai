@@ -247,7 +247,7 @@ class TestOpenAIProvider:
         mock_post.return_value = mock_response
 
         provider = OpenAIProvider(model="gpt-4o-mini", api_key="test-key")
-        result = provider.complete("Hello")
+        result, usage = provider.complete("Hello")
         assert result == "Hello world!"
 
     @patch('providers.openai_provider.requests.post')
@@ -267,7 +267,7 @@ class TestOpenAIProvider:
         mock_post.return_value = mock_response
 
         provider = OpenAIProvider(model="gpt-5-mini", api_key="test-key")
-        result = provider.complete("Hello")
+        result, usage = provider.complete("Hello")
         assert result == "Hello from GPT-5!"
 
     @patch('providers.openai_provider.requests.post')
@@ -520,7 +520,7 @@ class TestXAIProvider:
         mock_post.return_value = mock_response
 
         provider = XAIProvider(model="grok-3-mini", api_key="test-key")
-        result = provider.complete("Hello")
+        result, usage = provider.complete("Hello")
         assert result == "Hello from Grok!"
 
     @patch('providers.xai_provider.requests.post')
@@ -744,7 +744,7 @@ class TestAnthropicProvider:
         mock_post.return_value = mock_response
 
         provider = AnthropicProvider(model="claude-sonnet-4-20250514", api_key="test-key")
-        result = provider.complete("Hello")
+        result, usage = provider.complete("Hello")
         assert result == "Hello from Claude!"
 
     @patch('providers.anthropic_provider.requests.post')
@@ -765,7 +765,7 @@ class TestAnthropicProvider:
         mock_post.return_value = mock_response
 
         provider = AnthropicProvider(model="claude-sonnet-4-20250514", api_key="test-key")
-        result = provider.complete("Hello")
+        result, usage = provider.complete("Hello")
         assert result == "Part 1. Part 2."
 
     @patch('providers.anthropic_provider.requests.post')
@@ -1033,7 +1033,7 @@ class TestGeminiProvider:
         mock_post.return_value = mock_response
 
         provider = GeminiProvider(model="gemini-2.0-flash", api_key="test-key")
-        result = provider.complete("Hello")
+        result, usage = provider.complete("Hello")
         assert result == "Hello from Gemini!"
 
     @patch('providers.gemini_provider.requests.post')
@@ -1058,7 +1058,7 @@ class TestGeminiProvider:
         mock_post.return_value = mock_response
 
         provider = GeminiProvider(model="gemini-2.0-flash", api_key="test-key")
-        result = provider.complete("Hello")
+        result, usage = provider.complete("Hello")
         assert result == "Part 1. Part 2."
 
     @patch('providers.gemini_provider.requests.post')

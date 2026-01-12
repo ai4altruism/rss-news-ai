@@ -4,14 +4,17 @@
 Utility functions for the RSS News AI application.
 
 Provides LLM calling functionality through the provider abstraction layer,
-with backward compatibility for existing code.
+with backward compatibility for existing code. Includes automatic usage
+tracking to SQLite database (Sprint 12).
 """
 
 import os
 import logging
 from typing import Optional
 
-from providers import get_provider, parse_model_config
+from providers import get_provider, parse_model_config, LLMUsageMetadata
+from pricing import calculate_cost
+from history_db import save_llm_usage, init_database
 
 
 def call_llm(
@@ -21,11 +24,13 @@ def call_llm(
     instructions: str = "",
     max_tokens: int = 500,
     temperature: float = 1.0,
+    task_type: str = "unknown",
 ) -> str:
     """
     Call an LLM using the provider abstraction layer.
 
     This is the preferred way to call LLMs as it supports multiple providers.
+    Automatically logs usage metrics to the database.
 
     Args:
         model_config: Model configuration string
@@ -42,6 +47,7 @@ def call_llm(
         instructions: System instructions or context
         max_tokens: Maximum tokens in the response
         temperature: Sampling temperature (0.0 to 2.0)
+        task_type: Type of task for usage tracking ('filter', 'group', 'summarize', 'query')
 
     Returns:
         The generated text response
@@ -58,12 +64,53 @@ def call_llm(
         xai_api_key=api_keys.get("xai"),
     )
 
-    return provider.complete(
+    # Call provider and get response with usage metadata
+    response_text, usage = provider.complete(
         prompt=prompt,
         instructions=instructions,
         max_tokens=max_tokens,
         temperature=temperature,
     )
+
+    # Log usage to database (non-fatal if it fails)
+    _log_usage(provider, usage, task_type)
+
+    return response_text
+
+
+def _log_usage(provider, usage: LLMUsageMetadata, task_type: str) -> None:
+    """
+    Log LLM usage to the database.
+
+    This is non-fatal - errors are logged but don't break the pipeline.
+    """
+    try:
+        provider_name = provider.get_provider_name()
+        model_name = provider.get_model_name()
+
+        # Calculate cost estimate
+        cost_usd = calculate_cost(
+            provider=provider_name,
+            model=model_name,
+            input_tokens=usage.input_tokens,
+            output_tokens=usage.output_tokens,
+        )
+
+        # Save to database
+        save_llm_usage(
+            provider=provider_name,
+            model=model_name,
+            task_type=task_type,
+            input_tokens=usage.input_tokens,
+            output_tokens=usage.output_tokens,
+            total_tokens=usage.total_tokens,
+            cost_usd=cost_usd,
+            response_time_ms=usage.response_time_ms,
+        )
+
+    except Exception as e:
+        # Non-fatal: log warning but don't break the pipeline
+        logging.warning(f"Failed to log LLM usage: {e}")
 
 
 def call_responses_api(

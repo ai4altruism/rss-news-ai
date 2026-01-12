@@ -10,10 +10,11 @@ API Documentation: https://ai.google.dev/api/rest
 """
 
 import logging
+import time
 import requests
-from typing import Optional
+from typing import Optional, Tuple
 
-from .base import BaseProvider
+from .base import BaseProvider, LLMUsageMetadata
 
 
 class GeminiProvider(BaseProvider):
@@ -38,7 +39,7 @@ class GeminiProvider(BaseProvider):
         instructions: str = "",
         max_tokens: int = 500,
         temperature: float = 1.0,
-    ) -> str:
+    ) -> Tuple[str, LLMUsageMetadata]:
         """
         Generate a completion using Google's Generative Language API.
 
@@ -49,12 +50,14 @@ class GeminiProvider(BaseProvider):
             temperature: Sampling temperature (0.0 to 2.0 for Gemini)
 
         Returns:
-            The generated text response
+            Tuple of (response_text, usage_metadata)
 
         Raises:
             ValueError: If the response cannot be parsed
             requests.HTTPError: If the API request fails
         """
+        start_time = time.time()
+
         # Gemini uses API key as query parameter
         url = f"{self._get_api_url()}?key={self.api_key}"
 
@@ -86,6 +89,9 @@ class GeminiProvider(BaseProvider):
 
         resp = requests.post(url, headers=headers, json=data)
 
+        # Calculate response time
+        response_time_ms = int((time.time() - start_time) * 1000)
+
         if not resp.ok:
             self._handle_error(resp)
 
@@ -96,7 +102,25 @@ class GeminiProvider(BaseProvider):
             error_msg = resp_json["error"].get("message", "Unknown error")
             raise ValueError(f"Gemini error: {error_msg}")
 
-        return self._parse_response(resp_json)
+        # Extract usage metadata
+        usage = self._extract_usage(resp_json, response_time_ms)
+
+        return self._parse_response(resp_json), usage
+
+    def _extract_usage(self, resp_json: dict, response_time_ms: int) -> LLMUsageMetadata:
+        """Extract token usage from Gemini response."""
+        usage_data = resp_json.get("usageMetadata", {})
+
+        input_tokens = usage_data.get("promptTokenCount", 0)
+        output_tokens = usage_data.get("candidatesTokenCount", 0)
+        total_tokens = usage_data.get("totalTokenCount", input_tokens + output_tokens)
+
+        return LLMUsageMetadata(
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            total_tokens=total_tokens,
+            response_time_ms=response_time_ms,
+        )
 
     def _handle_error(self, resp: requests.Response) -> None:
         """

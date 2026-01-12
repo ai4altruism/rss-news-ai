@@ -8,10 +8,11 @@ handling for each (temperature, reasoning effort, response parsing).
 """
 
 import logging
+import time
 import requests
-from typing import Optional
+from typing import Optional, Tuple
 
-from .base import BaseProvider
+from .base import BaseProvider, LLMUsageMetadata
 
 
 class OpenAIProvider(BaseProvider):
@@ -32,7 +33,7 @@ class OpenAIProvider(BaseProvider):
         instructions: str = "",
         max_tokens: int = 500,
         temperature: float = 1.0,
-    ) -> str:
+    ) -> Tuple[str, LLMUsageMetadata]:
         """
         Generate a completion using OpenAI's Responses API.
 
@@ -41,7 +42,12 @@ class OpenAIProvider(BaseProvider):
         - Uses low reasoning effort for speed
         - Higher max_tokens to accommodate reasoning tokens
         - Different response structure (reasoning block + message block)
+
+        Returns:
+            Tuple of (response_text, usage_metadata)
         """
+        start_time = time.time()
+
         headers = {
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",
@@ -69,6 +75,10 @@ class OpenAIProvider(BaseProvider):
             data["instructions"] = instructions
 
         resp = requests.post(self.API_URL, headers=headers, json=data)
+
+        # Calculate response time
+        response_time_ms = int((time.time() - start_time) * 1000)
+
         if not resp.ok:
             logging.error(
                 f"OpenAI Responses API error. Status: {resp.status_code}, Body: {resp.text}"
@@ -81,7 +91,25 @@ class OpenAIProvider(BaseProvider):
         if resp_json.get("error"):
             raise ValueError(f"OpenAI error: {resp_json['error']}")
 
-        return self._parse_response(resp_json)
+        # Extract usage metadata
+        usage = self._extract_usage(resp_json, response_time_ms)
+
+        return self._parse_response(resp_json), usage
+
+    def _extract_usage(self, resp_json: dict, response_time_ms: int) -> LLMUsageMetadata:
+        """Extract token usage from OpenAI response."""
+        usage_data = resp_json.get("usage", {})
+
+        input_tokens = usage_data.get("input_tokens", 0) or usage_data.get("prompt_tokens", 0)
+        output_tokens = usage_data.get("output_tokens", 0) or usage_data.get("completion_tokens", 0)
+        total_tokens = usage_data.get("total_tokens", input_tokens + output_tokens)
+
+        return LLMUsageMetadata(
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            total_tokens=total_tokens,
+            response_time_ms=response_time_ms,
+        )
 
     def _parse_response(self, resp_json: dict) -> str:
         """
