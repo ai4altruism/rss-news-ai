@@ -1,7 +1,7 @@
 # Development Progress
 
-**Last Updated:** 2026-01-11
-**Last Session:** Sprint 11 (Provider Testing & Hardening) - FINAL SPRINT
+**Last Updated:** 2026-01-12
+**Last Session:** Sprint 12 (Token Usage Monitoring) - Started
 
 ## Current State
 
@@ -46,11 +46,20 @@ docker run -d \
 | 8 | xAI Grok Integration | 13 | ✅ Complete |
 | 9 | Anthropic Claude Integration | 15 | ✅ Complete |
 | 10 | Google Gemini Integration | 17 | ✅ Complete |
-| **11** | **Provider Testing & Hardening** | **45** | 🚧 **In Progress** |
+| 11 | Provider Testing & Hardening | 45 | ✅ Complete |
+| **12** | **Token Usage Monitoring** | **24** | 🚧 **In Progress** |
 
-**Total Tests:** 261 passing
+**Total Tests:** 284 passing
 
-### Sprint 11 Deliverables (In Progress)
+### Sprint 12 Deliverables (In Progress)
+- `src/history_db.py` - `llm_usage` table schema and query functions
+- `src/providers/base.py` - `LLMUsageMetadata` dataclass
+- `src/pricing.py` - Provider pricing and cost estimation
+- Updated provider implementations - Token usage extraction
+- `src/utils.py` - Usage logging in `call_llm()`
+- `src/usage_cli.py` - CLI tool for usage reporting
+
+### Sprint 11 Deliverables (Complete)
 - `tests/test_cross_provider.py` - 45 cross-provider integration tests
 - Updated `README.md` - Provider comparison table and recommended configurations
 - Cross-provider test coverage for all 4 providers
@@ -112,8 +121,8 @@ All 4 LLM providers are fully implemented and tested:
 | **Anthropic** | claude-sonnet-4-20250514, claude-haiku | 15 | ✅ |
 | **Google** | gemini-2.0-flash, gemini-pro | 17 | ✅ |
 
-**Total Provider Tests:** 75 + 45 cross-provider = 120 provider-related tests
-**Total All Tests:** 261 passing
+**Total Provider Tests:** 75 + 45 cross-provider + 24 usage = 144 provider-related tests
+**Total All Tests:** 284 passing
 
 ### Key Achievements
 - Clean provider abstraction with `BaseProvider` interface
@@ -126,10 +135,12 @@ All 4 LLM providers are fully implemented and tested:
 
 | File | Purpose |
 |------|---------|
-| `docs/sdp.md` | Software Development Plan (Sprints 1-11) |
+| `docs/sdp.md` | Software Development Plan (Sprints 1-12) |
 | `docs/sprint-*-summary.md` | Individual sprint summaries |
 | `src/providers/` | LLM provider abstraction layer |
 | `src/utils.py` | Main LLM calling utilities |
+| `src/pricing.py` | LLM pricing and cost estimation |
+| `src/usage_cli.py` | Usage reporting CLI tool |
 | `.env` | Local development config (not committed) |
 
 ## Development Environment
@@ -175,7 +186,7 @@ sqlite3 /var/lib/rss-news-ai/data/history.db "SELECT COUNT(*) FROM summaries;"
 
 ### Provider Architecture
 ```
-call_llm() or call_responses_api()
+call_llm(task_type="filter") or call_responses_api()
     ↓
 get_provider(model_config)
     ↓
@@ -183,14 +194,16 @@ parse_model_config() → (provider_name, model_name)
     ↓
 ProviderFactory → OpenAIProvider / XAIProvider / etc.
     ↓
-provider.complete(prompt, instructions, max_tokens, temperature)
+provider.complete() → (response_text, LLMUsageMetadata)
+    ↓
+_log_usage() → saves to llm_usage table (non-fatal)
 ```
 
-## Pending Items
+## Current Sprint
 
-1. **Sprint 8:** xAI Grok integration (1 week)
-2. **Sprint 9:** Anthropic Claude integration (2 weeks)
-3. **Sprint 10:** Google Gemini integration (2 weeks)
-4. **Sprint 11:** Provider testing & hardening (1 week)
+**Sprint 12: Token Usage Monitoring**
+- Track token usage, costs, and response times for all LLM calls
+- Persist to SQLite database
+- CLI tool for usage reporting and analysis
 
-See `docs/sdp.md` for full sprint details and task breakdowns.
+See `docs/sdp.md` and `docs/sprint-12-summary.md` for full sprint details.

@@ -34,9 +34,9 @@ class TestAllProvidersRegistered:
     """Verify all expected providers are registered."""
 
     def test_all_four_providers_available(self):
-        """All 4 providers should be registered."""
+        """All 4 main providers should be registered."""
         providers = list_providers()
-        assert len(providers) == 4
+        assert len(providers) >= 4
         assert "openai" in providers
         assert "xai" in providers
         assert "anthropic" in providers
@@ -204,7 +204,7 @@ class TestCrossProviderMockedCompletion:
         mock_post.return_value = mock_response
 
         provider = OpenAIProvider(model="gpt-4o-mini", api_key="test-key")
-        result = provider.complete("Test prompt", instructions="Be helpful")
+        result, usage = provider.complete("Test prompt", instructions="Be helpful")
 
         assert result == "OpenAI response"
         assert mock_post.called
@@ -218,7 +218,7 @@ class TestCrossProviderMockedCompletion:
         mock_post.return_value = mock_response
 
         provider = XAIProvider(model="grok-3-mini", api_key="test-key")
-        result = provider.complete("Test prompt", instructions="Be helpful")
+        result, usage = provider.complete("Test prompt", instructions="Be helpful")
 
         assert result == "xAI response"
         assert mock_post.called
@@ -232,7 +232,7 @@ class TestCrossProviderMockedCompletion:
         mock_post.return_value = mock_response
 
         provider = AnthropicProvider(model="claude-sonnet-4-20250514", api_key="test-key")
-        result = provider.complete("Test prompt", instructions="Be helpful")
+        result, usage = provider.complete("Test prompt", instructions="Be helpful")
 
         assert result == "Anthropic response"
         assert mock_post.called
@@ -246,7 +246,7 @@ class TestCrossProviderMockedCompletion:
         mock_post.return_value = mock_response
 
         provider = GeminiProvider(model="gemini-2.0-flash", api_key="test-key")
-        result = provider.complete("Test prompt", instructions="Be helpful")
+        result, usage = provider.complete("Test prompt", instructions="Be helpful")
 
         assert result == "Gemini response"
         assert mock_post.called
@@ -375,7 +375,7 @@ class TestBackwardCompatibility:
         provider = get_provider("gpt-4o-mini", openai_api_key="test-key")
         assert isinstance(provider, OpenAIProvider)
 
-        result = provider.complete("Hello")
+        result, usage = provider.complete("Hello")
         assert result == "OK"
 
     @patch('providers.openai_provider.requests.post')

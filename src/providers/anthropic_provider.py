@@ -10,10 +10,11 @@ API Documentation: https://docs.anthropic.com/en/api/messages
 """
 
 import logging
+import time
 import requests
-from typing import Optional
+from typing import Optional, Tuple
 
-from .base import BaseProvider
+from .base import BaseProvider, LLMUsageMetadata
 
 
 class AnthropicProvider(BaseProvider):
@@ -31,7 +32,7 @@ class AnthropicProvider(BaseProvider):
         instructions: str = "",
         max_tokens: int = 500,
         temperature: float = 1.0,
-    ) -> str:
+    ) -> Tuple[str, LLMUsageMetadata]:
         """
         Generate a completion using Anthropic's Messages API.
 
@@ -42,12 +43,14 @@ class AnthropicProvider(BaseProvider):
             temperature: Sampling temperature (0.0 to 1.0 for Anthropic)
 
         Returns:
-            The generated text response
+            Tuple of (response_text, usage_metadata)
 
         Raises:
             ValueError: If the response cannot be parsed
             requests.HTTPError: If the API request fails
         """
+        start_time = time.time()
+
         headers = {
             "x-api-key": self.api_key,
             "anthropic-version": self.API_VERSION,
@@ -74,6 +77,9 @@ class AnthropicProvider(BaseProvider):
 
         resp = requests.post(self.API_URL, headers=headers, json=data)
 
+        # Calculate response time
+        response_time_ms = int((time.time() - start_time) * 1000)
+
         if not resp.ok:
             self._handle_error(resp)
 
@@ -84,7 +90,25 @@ class AnthropicProvider(BaseProvider):
             error_msg = resp_json.get("error", {}).get("message", "Unknown error")
             raise ValueError(f"Anthropic error: {error_msg}")
 
-        return self._parse_response(resp_json)
+        # Extract usage metadata
+        usage = self._extract_usage(resp_json, response_time_ms)
+
+        return self._parse_response(resp_json), usage
+
+    def _extract_usage(self, resp_json: dict, response_time_ms: int) -> LLMUsageMetadata:
+        """Extract token usage from Anthropic response."""
+        usage_data = resp_json.get("usage", {})
+
+        input_tokens = usage_data.get("input_tokens", 0)
+        output_tokens = usage_data.get("output_tokens", 0)
+        total_tokens = input_tokens + output_tokens
+
+        return LLMUsageMetadata(
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            total_tokens=total_tokens,
+            response_time_ms=response_time_ms,
+        )
 
     def _handle_error(self, resp: requests.Response) -> None:
         """

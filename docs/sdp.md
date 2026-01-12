@@ -33,9 +33,10 @@ RSS News AI is a Python-based application that monitors RSS feeds for generative
 | Sprint 6: Security Hardening | 1 week | **Complete** | 2025-12-14 |
 | Sprint 7: Multi-Provider Abstraction | 1 week | **Planned** | TBD |
 | Sprint 8: xAI Grok Integration | 1 week | **Planned** | TBD |
-| Sprint 9: Anthropic Claude Integration | 2 weeks | **Planned** | TBD |
-| Sprint 10: Google Gemini Integration | 2 weeks | **Planned** | TBD |
-| Sprint 11: Provider Testing & Hardening | 1 week | **Planned** | TBD |
+| Sprint 9: Anthropic Claude Integration | 2 weeks | **Complete** | 2026-01-08 |
+| Sprint 10: Google Gemini Integration | 2 weeks | **Complete** | 2026-01-10 |
+| Sprint 11: Provider Testing & Hardening | 1 week | **Complete** | 2026-01-11 |
+| Sprint 12: Token Usage Monitoring | 1 week | **Planned** | TBD |
 
 ## 2. Team and Resources
 
@@ -714,6 +715,407 @@ QUERY_MODEL=google:gemini-2.0-flash
 
 ---
 
+### Sprint 12: Token Usage Monitoring (NEW)
+**Goal**: Track and persist token usage, costs, and performance metrics for all LLM calls across providers.
+
+**Duration**: 1 week
+**Status**: Planned
+
+#### Requirements Addressed
+- **FR-12.1**: SQLite table for token usage tracking (Must Have)
+- **FR-12.2**: Capture usage metrics from all provider APIs (Must Have)
+- **FR-12.3**: Modified provider interface to return usage metadata (Must Have)
+- **FR-12.4**: Cost estimation per call using provider pricing (Should Have)
+- **FR-12.5**: CLI script for usage reporting and analysis (Must Have)
+- **FR-12.6**: Response time tracking per LLM call (Should Have)
+
+#### Task Breakdown
+| Task ID | Task | Effort | Dependencies | Requirement |
+|---------|------|--------|--------------|-------------|
+| S12-1 | Design `llm_usage` database schema | S | None | FR-12.1 |
+| S12-2 | Add `llm_usage` table to `history_db.py` | M | S12-1 | FR-12.1 |
+| S12-3 | Create pricing table/config for all 4 providers | S | None | FR-12.4 |
+| S12-4 | Design `LLMUsageMetadata` dataclass for return values | S | None | FR-12.3 |
+| S12-5 | Modify `BaseProvider.complete()` to return tuple (text, metadata) | M | S12-4 | FR-12.3 |
+| S12-6 | Update `OpenAIProvider` to extract token usage from API response | M | S12-5 | FR-12.2 |
+| S12-7 | Update `XAIProvider` to extract token usage from API response | S | S12-5 | FR-12.2 |
+| S12-8 | Update `AnthropicProvider` to extract token usage from API response | M | S12-5 | FR-12.2 |
+| S12-9 | Update `GeminiProvider` to extract token usage from API response | M | S12-5 | FR-12.2 |
+| S12-10 | Update `call_llm()` in `utils.py` to log usage to database | L | S12-2, S12-5 | FR-12.2 |
+| S12-11 | Add response time measurement to `call_llm()` | S | S12-10 | FR-12.6 |
+| S12-12 | Create cost estimation utility function | M | S12-3 | FR-12.4 |
+| S12-13 | Create `src/usage_cli.py` with usage query commands | L | S12-2 | FR-12.5 |
+| S12-14 | Add usage reporting functions to `history_db.py` | M | S12-2 | FR-12.5 |
+| S12-15 | Write unit tests for usage tracking | M | S12-2, S12-10 | - |
+| S12-16 | Write unit tests for provider metadata extraction | L | S12-6-S12-9 | - |
+| S12-17 | Write unit tests for cost estimation | S | S12-12 | - |
+| S12-18 | Write integration tests for end-to-end usage tracking | M | S12-10 | - |
+| S12-19 | Update existing tests to handle new return signature | L | S12-5 | - |
+| S12-20 | Update README with usage monitoring documentation | M | S12-13 | - |
+
+**Effort Key**: S = 2-4h, M = 4-8h, L = 8-16h
+
+#### Deliverables
+- **Database Schema**:
+  - New `llm_usage` table in `history_db.py`
+  - Indexes for common query patterns (provider, task_type, date)
+- **Provider Modifications**:
+  - `src/providers/base.py` - Updated interface with `LLMUsageMetadata` dataclass
+  - All 4 provider implementations updated to extract and return usage
+- **Usage Tracking**:
+  - Updated `src/utils.py` - `call_llm()` logs usage to database
+  - `src/usage_cli.py` - CLI for usage analysis
+  - Usage query functions in `history_db.py`
+- **Cost Estimation**:
+  - Provider pricing configuration (`src/pricing.py`)
+  - Cost calculation utility
+- **Testing**:
+  - Unit tests: 20+ new tests
+  - Integration tests: 5+ new tests
+  - Updated existing tests: ~261 tests updated
+- **Documentation**:
+  - README section on usage monitoring
+  - Usage CLI command examples
+
+#### Database Schema Design
+
+```sql
+-- Track token usage and costs per LLM call
+CREATE TABLE IF NOT EXISTS llm_usage (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    timestamp TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    provider TEXT NOT NULL,           -- 'openai', 'xai', 'anthropic', 'google'
+    model TEXT NOT NULL,              -- 'gpt-4o-mini', 'grok-3', etc.
+    task_type TEXT NOT NULL,          -- 'filter', 'group', 'summarize', 'query'
+    input_tokens INTEGER NOT NULL,
+    output_tokens INTEGER NOT NULL,
+    total_tokens INTEGER NOT NULL,
+    cost_usd REAL,                    -- Estimated cost in USD
+    response_time_ms INTEGER,         -- Response time in milliseconds
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Indexes for efficient querying
+CREATE INDEX IF NOT EXISTS idx_llm_usage_provider ON llm_usage(provider);
+CREATE INDEX IF NOT EXISTS idx_llm_usage_task_type ON llm_usage(task_type);
+CREATE INDEX IF NOT EXISTS idx_llm_usage_timestamp ON llm_usage(timestamp);
+CREATE INDEX IF NOT EXISTS idx_llm_usage_model ON llm_usage(model);
+```
+
+#### Provider Interface Changes
+
+```python
+# src/providers/base.py
+from dataclasses import dataclass
+from typing import Optional, Tuple
+
+@dataclass
+class LLMUsageMetadata:
+    """Metadata about an LLM API call."""
+    input_tokens: int
+    output_tokens: int
+    total_tokens: int
+    model: str
+    provider: str
+    response_time_ms: Optional[int] = None
+
+    def __post_init__(self):
+        # Ensure total_tokens is correct
+        if self.total_tokens == 0:
+            self.total_tokens = self.input_tokens + self.output_tokens
+
+
+class BaseProvider(ABC):
+    """Abstract base class for LLM providers."""
+
+    @abstractmethod
+    def complete(
+        self,
+        prompt: str,
+        instructions: str = "",
+        max_tokens: int = 500,
+        temperature: float = 1.0,
+    ) -> Tuple[str, LLMUsageMetadata]:
+        """
+        Generate a completion for the given prompt.
+
+        Returns:
+            Tuple of (response_text, usage_metadata)
+        """
+        pass
+```
+
+#### Cost Estimation Configuration
+
+```python
+# src/pricing.py
+"""
+Provider pricing configuration for cost estimation.
+Prices are per 1 million tokens (USD).
+Updated as of January 2026.
+"""
+
+PROVIDER_PRICING = {
+    "openai": {
+        "gpt-4o": {"input": 2.50, "output": 10.00},
+        "gpt-4o-mini": {"input": 0.15, "output": 0.60},
+        "gpt-5": {"input": 10.00, "output": 30.00},
+        "gpt-5-mini": {"input": 1.00, "output": 4.00},
+    },
+    "xai": {
+        "grok-3": {"input": 2.00, "output": 10.00},
+        "grok-3-mini": {"input": 0.20, "output": 0.80},
+    },
+    "anthropic": {
+        "claude-sonnet-4-20250514": {"input": 3.00, "output": 15.00},
+        "claude-haiku-20250320": {"input": 0.25, "output": 1.25},
+        "claude-opus-4-20250514": {"input": 15.00, "output": 75.00},
+    },
+    "google": {
+        "gemini-2.0-flash": {"input": 0.075, "output": 0.30},
+        "gemini-pro": {"input": 0.50, "output": 1.50},
+        "gemini-2.0-flash-thinking": {"input": 0.075, "output": 0.30},
+    },
+}
+
+
+def estimate_cost(
+    provider: str,
+    model: str,
+    input_tokens: int,
+    output_tokens: int
+) -> float:
+    """
+    Estimate cost in USD for an LLM call.
+
+    Args:
+        provider: Provider name ('openai', 'xai', 'anthropic', 'google')
+        model: Model name
+        input_tokens: Number of input tokens
+        output_tokens: Number of output tokens
+
+    Returns:
+        Estimated cost in USD, or 0.0 if pricing not found
+    """
+    pricing = PROVIDER_PRICING.get(provider, {}).get(model)
+    if not pricing:
+        return 0.0
+
+    input_cost = (input_tokens / 1_000_000) * pricing["input"]
+    output_cost = (output_tokens / 1_000_000) * pricing["output"]
+
+    return input_cost + output_cost
+```
+
+#### Usage CLI Examples
+
+```bash
+# Show overall usage statistics
+python src/usage_cli.py stats
+
+# Output:
+# Token Usage Statistics
+# =====================
+# Total Calls: 1,247
+# Total Input Tokens: 542,893
+# Total Output Tokens: 89,234
+# Total Tokens: 632,127
+# Estimated Total Cost: $12.45 USD
+
+# Usage by provider
+python src/usage_cli.py by-provider
+
+# Output:
+# Provider      Calls    Input Tokens    Output Tokens    Cost (USD)
+# ----------  -------  --------------  ---------------  ------------
+# openai          834          342,123           45,678        $5.23
+# anthropic       287          156,234           32,456        $6.12
+# google          126           44,536           11,100        $1.10
+
+# Usage by task type
+python src/usage_cli.py by-task
+
+# Output:
+# Task Type      Calls    Input Tokens    Output Tokens    Cost (USD)
+# -----------  -------  --------------  ---------------  ------------
+# filter           412          123,456           12,345        $2.34
+# group            398          198,234           34,567        $5.67
+# summarize        398          187,654           38,901        $4.23
+# query             39           33,549            3,421        $0.21
+
+# Usage for specific date range
+python src/usage_cli.py range --start 2026-01-01 --end 2026-01-10
+
+# Usage by model
+python src/usage_cli.py by-model --provider openai
+
+# Cost breakdown
+python src/usage_cli.py costs --breakdown
+
+# Export usage data to CSV
+python src/usage_cli.py export --output usage_report.csv
+```
+
+#### Integration with `call_llm()`
+
+```python
+# src/utils.py (updated)
+def call_llm(
+    model_config: str,
+    prompt: str,
+    api_keys: dict,
+    instructions: str = "",
+    max_tokens: int = 500,
+    temperature: float = 1.0,
+    task_type: str = "unknown",  # NEW: track what this call is for
+) -> str:
+    """
+    Call an LLM using the provider abstraction layer.
+
+    Now automatically logs usage to database.
+    """
+    import time
+    from pricing import estimate_cost
+    from history_db import log_llm_usage
+
+    provider = get_provider(
+        model_config,
+        openai_api_key=api_keys.get("openai"),
+        anthropic_api_key=api_keys.get("anthropic"),
+        google_api_key=api_keys.get("google"),
+        xai_api_key=api_keys.get("xai"),
+    )
+
+    # Measure response time
+    start_time = time.time()
+
+    # Call provider (now returns tuple)
+    response_text, usage_metadata = provider.complete(
+        prompt=prompt,
+        instructions=instructions,
+        max_tokens=max_tokens,
+        temperature=temperature,
+    )
+
+    # Calculate response time
+    response_time_ms = int((time.time() - start_time) * 1000)
+    usage_metadata.response_time_ms = response_time_ms
+
+    # Estimate cost
+    cost_usd = estimate_cost(
+        provider=usage_metadata.provider,
+        model=usage_metadata.model,
+        input_tokens=usage_metadata.input_tokens,
+        output_tokens=usage_metadata.output_tokens,
+    )
+
+    # Log to database (non-fatal)
+    try:
+        log_llm_usage(
+            provider=usage_metadata.provider,
+            model=usage_metadata.model,
+            task_type=task_type,
+            input_tokens=usage_metadata.input_tokens,
+            output_tokens=usage_metadata.output_tokens,
+            total_tokens=usage_metadata.total_tokens,
+            cost_usd=cost_usd,
+            response_time_ms=response_time_ms,
+        )
+    except Exception as e:
+        logging.warning(f"Failed to log LLM usage: {e}")
+
+    return response_text
+```
+
+#### Key Technical Considerations
+
+1. **Backward Compatibility**:
+   - Provider interface change from `-> str` to `-> Tuple[str, LLMUsageMetadata]`
+   - All 261 existing tests need updating to handle new return type
+   - Wrapper function needed for backward compatibility if any external code uses providers directly
+
+2. **Provider-Specific Token Extraction**:
+   - **OpenAI**: `response.usage.prompt_tokens`, `response.usage.completion_tokens`
+   - **xAI**: Same as OpenAI (OpenAI-compatible API)
+   - **Anthropic**: `response.usage.input_tokens`, `response.usage.output_tokens`
+   - **Google**: `response.usage_metadata.prompt_token_count`, `response.usage_metadata.candidates_token_count`
+
+3. **Error Handling**:
+   - Usage logging failures should NOT break the main pipeline
+   - Log warnings but continue execution
+   - Database write failures should be non-fatal
+
+4. **Task Type Tracking**:
+   - Task types: `filter`, `group`, `summarize`, `query`
+   - Need to update all call sites in:
+     - `llm_filter.py` → task_type="filter"
+     - `summarizer.py` (grouping) → task_type="group"
+     - `summarizer.py` (summarization) → task_type="summarize"
+     - `query_engine.py` → task_type="query"
+
+5. **Cost Estimation Accuracy**:
+   - Prices should be configurable and updatable
+   - Consider environment variable overrides
+   - Log warning if model pricing not found
+
+#### Git Operations
+- Create branch: `feature/sprint-12-token-usage-monitoring`
+- Daily commits with conventional messages
+- PR review with usage tracking examples
+- Merge to `master` after all tests pass
+
+#### Testing Milestones
+- Day 2: Database schema and basic logging tests complete
+- Day 4: All provider implementations updated with tests
+- Day 6: CLI tool complete with full integration tests
+- Day 7: All tests passing, documentation complete, ready for merge
+
+#### Success Criteria
+- [ ] `llm_usage` table created and indexed
+- [ ] All 4 providers return usage metadata
+- [ ] Usage automatically logged for all LLM calls
+- [ ] CLI tool provides comprehensive usage analysis
+- [ ] Cost estimation working for all providers
+- [ ] Response time tracking implemented
+- [ ] All 261+ existing tests updated and passing
+- [ ] 20+ new unit tests added
+- [ ] 5+ integration tests added
+- [ ] Documentation complete with examples
+
+#### Test Coverage Updates
+
+| Test File | Changes Required | New Tests |
+|-----------|-----------------|-----------|
+| `tests/test_providers.py` | Update all provider tests to expect tuple returns | +20 |
+| `tests/test_utils.py` | Update `call_llm()` tests | +5 |
+| `tests/test_history_db.py` | Add `llm_usage` table tests | +8 |
+| `tests/test_usage_cli.py` | NEW: CLI command tests | +10 |
+| `tests/test_pricing.py` | NEW: Cost estimation tests | +5 |
+| `tests/test_integration_usage.py` | NEW: End-to-end usage tracking | +5 |
+
+**Expected Final Test Count**: 261 (current) + 53 (new) = 314 tests
+
+#### Migration Path
+
+For existing code that may call providers directly:
+
+```python
+# OLD (before Sprint 12)
+response = provider.complete(prompt="Hello", instructions="Be helpful")
+# response is str
+
+# NEW (Sprint 12+)
+response, usage = provider.complete(prompt="Hello", instructions="Be helpful")
+# response is str, usage is LLMUsageMetadata
+
+# If you only need the text (ignore usage):
+response = provider.complete(prompt="Hello", instructions="Be helpful")[0]
+```
+
+For `call_llm()` users (most code), no changes needed as it still returns `str`.
+
+---
+
 ## 7. Risk Management
 
 ### 7.1 Identified Risks
@@ -904,11 +1306,12 @@ def get_provider(model_config: str) -> BaseProvider:
 | Sprint 4 | 85 | 21 | 106 |
 | Sprint 5 | 106 | 13 | 119 |
 | Sprint 6 | 119 | 22 | 141 |
-| Sprint 7 | 141 | 15 | 156 |
-| Sprint 8 | 156 | 10 | 166 |
-| Sprint 9 | 166 | 15 | 181 |
-| Sprint 10 | 181 | 15 | 196 |
-| Sprint 11 | 196 | 20 | 216+ |
+| Sprint 7 | 141 | 30 | 171 |
+| Sprint 8 | 171 | 13 | 184 |
+| Sprint 9 | 184 | 15 | 199 |
+| Sprint 10 | 199 | 17 | 216 |
+| Sprint 11 | 216 | 45 | 261 |
+| Sprint 12 | 261 | 53 | 314 |
 
 ### C. Provider API Reference
 | Provider | API Documentation | Key Differences |

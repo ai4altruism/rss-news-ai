@@ -22,7 +22,7 @@ Usage:
 
 from typing import Optional
 
-from .base import BaseProvider
+from .base import BaseProvider, LLMUsageMetadata
 from .openai_provider import OpenAIProvider
 from .xai_provider import XAIProvider
 from .anthropic_provider import AnthropicProvider
@@ -138,6 +138,7 @@ def register_provider(name: str, provider_class: type) -> None:
 # Export public API
 __all__ = [
     "BaseProvider",
+    "LLMUsageMetadata",
     "OpenAIProvider",
     "XAIProvider",
     "AnthropicProvider",
