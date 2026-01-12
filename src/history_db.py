@@ -82,6 +82,21 @@ CREATE INDEX IF NOT EXISTS idx_llm_usage_timestamp ON llm_usage(timestamp);
 CREATE INDEX IF NOT EXISTS idx_llm_usage_provider ON llm_usage(provider);
 CREATE INDEX IF NOT EXISTS idx_llm_usage_task_type ON llm_usage(task_type);
 CREATE INDEX IF NOT EXISTS idx_llm_usage_model ON llm_usage(model);
+
+-- Article embeddings for semantic deduplication (Sprint 13)
+CREATE TABLE IF NOT EXISTS article_embeddings (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    url TEXT UNIQUE NOT NULL,
+    title TEXT NOT NULL,
+    lead_text TEXT,                    -- First sentence of summary
+    embedding BLOB NOT NULL,           -- numpy array as bytes (1536 floats for text-embedding-3-small)
+    embedding_model TEXT DEFAULT 'text-embedding-3-small',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Indexes for efficient embedding queries
+CREATE INDEX IF NOT EXISTS idx_embeddings_created ON article_embeddings(created_at);
+CREATE INDEX IF NOT EXISTS idx_embeddings_url ON article_embeddings(url);
 """
 
 
@@ -1390,3 +1405,195 @@ def export_usage_csv(
     except Exception as e:
         logging.error(f"Failed to export usage CSV: {e}")
         return ""
+
+
+# =============================================================================
+# Article Embeddings (Sprint 13)
+# =============================================================================
+
+def save_article_embedding(
+    url: str,
+    title: str,
+    lead_text: str,
+    embedding: bytes,
+    embedding_model: str = "text-embedding-3-small",
+    db_path: Optional[str] = None
+) -> Optional[int]:
+    """
+    Save an article embedding to the database.
+
+    Parameters:
+        url: Article URL (unique identifier)
+        title: Article title
+        lead_text: First sentence/lead of the article
+        embedding: Embedding vector as bytes (numpy array serialized)
+        embedding_model: Name of the embedding model used
+        db_path: Path to database file.
+
+    Returns:
+        The embedding record ID if successful, None otherwise.
+    """
+    try:
+        with get_db_connection(db_path) as conn:
+            cursor = conn.execute(
+                """INSERT OR REPLACE INTO article_embeddings
+                   (url, title, lead_text, embedding, embedding_model)
+                   VALUES (?, ?, ?, ?, ?)""",
+                (url, title, lead_text, embedding, embedding_model)
+            )
+            conn.commit()
+            return cursor.lastrowid
+
+    except Exception as e:
+        logging.error(f"Failed to save article embedding: {e}")
+        return None
+
+
+def get_recent_embeddings(
+    days: int = 7,
+    db_path: Optional[str] = None
+) -> List[Dict[str, Any]]:
+    """
+    Get embeddings from the last N days for similarity comparison.
+
+    Parameters:
+        days: Number of days to look back (default: 7)
+        db_path: Path to database file.
+
+    Returns:
+        List of dicts with url, title, embedding (as bytes), created_at.
+    """
+    try:
+        with get_db_connection(db_path, readonly=True) as conn:
+            cursor = conn.execute(
+                """SELECT url, title, lead_text, embedding, embedding_model, created_at
+                   FROM article_embeddings
+                   WHERE created_at >= datetime('now', ?)
+                   ORDER BY created_at DESC""",
+                (f"-{days} days",)
+            )
+            return [dict(row) for row in cursor.fetchall()]
+
+    except Exception as e:
+        logging.error(f"Failed to get recent embeddings: {e}")
+        return []
+
+
+def get_embedding_by_url(
+    url: str,
+    db_path: Optional[str] = None
+) -> Optional[Dict[str, Any]]:
+    """
+    Get a specific article embedding by URL.
+
+    Parameters:
+        url: Article URL
+        db_path: Path to database file.
+
+    Returns:
+        Dict with embedding data or None if not found.
+    """
+    try:
+        with get_db_connection(db_path, readonly=True) as conn:
+            cursor = conn.execute(
+                """SELECT url, title, lead_text, embedding, embedding_model, created_at
+                   FROM article_embeddings
+                   WHERE url = ?""",
+                (url,)
+            )
+            row = cursor.fetchone()
+            return dict(row) if row else None
+
+    except Exception as e:
+        logging.error(f"Failed to get embedding by URL: {e}")
+        return None
+
+
+def get_embedding_count(db_path: Optional[str] = None) -> int:
+    """
+    Get total number of stored embeddings.
+
+    Parameters:
+        db_path: Path to database file.
+
+    Returns:
+        Number of embeddings stored.
+    """
+    try:
+        with get_db_connection(db_path, readonly=True) as conn:
+            cursor = conn.execute("SELECT COUNT(*) as count FROM article_embeddings")
+            row = cursor.fetchone()
+            return row["count"] if row else 0
+    except Exception as e:
+        logging.error(f"Failed to get embedding count: {e}")
+        return 0
+
+
+def cleanup_old_embeddings(
+    days: int = 30,
+    db_path: Optional[str] = None
+) -> int:
+    """
+    Remove embeddings older than specified days.
+
+    Parameters:
+        days: Number of days to retain (default: 30)
+        db_path: Path to database file.
+
+    Returns:
+        Number of embeddings deleted.
+    """
+    try:
+        with get_db_connection(db_path) as conn:
+            cursor = conn.execute(
+                """DELETE FROM article_embeddings
+                   WHERE created_at < datetime('now', ?)""",
+                (f"-{days} days",)
+            )
+            conn.commit()
+            deleted = cursor.rowcount
+            if deleted > 0:
+                logging.info(f"Cleaned up {deleted} old embeddings")
+            return deleted
+
+    except Exception as e:
+        logging.error(f"Failed to cleanup old embeddings: {e}")
+        return 0
+
+
+def get_embedding_stats(db_path: Optional[str] = None) -> Dict[str, Any]:
+    """
+    Get statistics about stored embeddings.
+
+    Parameters:
+        db_path: Path to database file.
+
+    Returns:
+        Dict with total_count, oldest, newest, by_model breakdown.
+    """
+    try:
+        with get_db_connection(db_path, readonly=True) as conn:
+            # Get overall stats
+            cursor = conn.execute(
+                """SELECT
+                    COUNT(*) as total_count,
+                    MIN(created_at) as oldest,
+                    MAX(created_at) as newest
+                FROM article_embeddings"""
+            )
+            row = cursor.fetchone()
+            stats = dict(row) if row else {}
+
+            # Get breakdown by model
+            cursor = conn.execute(
+                """SELECT embedding_model, COUNT(*) as count
+                   FROM article_embeddings
+                   GROUP BY embedding_model"""
+            )
+            stats["by_model"] = [dict(r) for r in cursor.fetchall()]
+
+            return stats
+
+    except Exception as e:
+        logging.error(f"Failed to get embedding stats: {e}")
+        return {}

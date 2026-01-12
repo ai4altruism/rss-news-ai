@@ -34,6 +34,11 @@ except ImportError:
     save_summary_to_db = None
     init_database = None
 
+try:
+    from embeddings import filter_semantic_duplicates
+except ImportError:
+    filter_semantic_duplicates = None
+
 
 def parse_arguments():
     """Parse command line arguments."""
@@ -60,6 +65,11 @@ def parse_arguments():
         "--ignore-history",
         action="store_true",
         help="Ignore article history (process all articles)",
+    )
+    parser.add_argument(
+        "--no-semantic-dedup",
+        action="store_true",
+        help="Disable semantic deduplication (embedding-based duplicate detection)",
     )
     return parser.parse_args()
 
@@ -141,6 +151,42 @@ def main():
     else:
         logger.info("Article history check skipped (--ignore-history flag used).")
         unique_articles = articles
+
+    # Semantic deduplication (embedding-based duplicate detection)
+    semantic_dedup_enabled = (
+        filter_semantic_duplicates is not None
+        and not args.no_semantic_dedup
+        and env_vars.get("ENABLE_SEMANTIC_DEDUP", "true").lower() == "true"
+    )
+
+    if semantic_dedup_enabled and unique_articles:
+        logger.info("Running semantic deduplication...")
+        try:
+            unique_articles, dedup_stats = filter_semantic_duplicates(
+                articles=unique_articles,
+                api_key=openai_api_key,
+            )
+            logger.info(
+                f"Semantic dedup: {dedup_stats['duplicates']} duplicates filtered, "
+                f"{dedup_stats['unique']} unique articles remain"
+            )
+        except Exception as e:
+            logger.warning(f"Semantic deduplication failed (continuing without): {e}")
+    elif not semantic_dedup_enabled:
+        logger.debug("Semantic deduplication disabled or not available")
+
+    # If no articles remain after deduplication, exit early
+    if not unique_articles:
+        logger.info("No unique articles to process after deduplication.")
+        empty_summary = {
+            "topics": [],
+            "message": "No unique articles found after deduplication.",
+        }
+        if args.output == "web" and save_summary:
+            save_summary(empty_summary)
+        if args.output == "console":
+            print(json.dumps(empty_summary, indent=4))
+        return
 
     # Filter articles using LLM
     logger.info("Filtering articles using LLM...")

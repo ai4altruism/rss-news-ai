@@ -59,6 +59,15 @@ PRICING = {
     },
 }
 
+# Embedding pricing per 1 million tokens (input only)
+EMBEDDING_PRICING = {
+    "openai": {
+        "text-embedding-3-small": 0.02,
+        "text-embedding-3-large": 0.13,
+        "text-embedding-ada-002": 0.10,
+    },
+}
+
 
 def get_model_pricing(provider: str, model: str) -> Optional[Dict[str, float]]:
     """
@@ -168,3 +177,36 @@ def get_provider_models(provider: str) -> list:
     if provider_lower not in PRICING:
         return []
     return list(PRICING[provider_lower].keys())
+
+
+def calculate_embedding_cost(
+    provider: str,
+    model: str,
+    tokens: int
+) -> Optional[float]:
+    """
+    Calculate estimated cost for an embedding API call.
+
+    Args:
+        provider: Provider name (currently only 'openai' supported)
+        model: Embedding model name (e.g., 'text-embedding-3-small')
+        tokens: Number of input tokens
+
+    Returns:
+        Estimated cost in USD, or None if pricing not available.
+    """
+    provider_lower = provider.lower()
+    if provider_lower not in EMBEDDING_PRICING:
+        logging.warning(f"Embedding pricing not found for provider: {provider}")
+        return None
+
+    provider_pricing = EMBEDDING_PRICING[provider_lower]
+
+    # Try exact match
+    if model in provider_pricing:
+        price_per_million = provider_pricing[model]
+    else:
+        logging.warning(f"Embedding pricing not found for {provider}:{model}")
+        return None
+
+    return round((tokens / 1_000_000) * price_per_million, 6)

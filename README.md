@@ -22,20 +22,22 @@ This application solves that problem by using AI to curate AI news. It monitors 
 
 | Category | Capabilities |
 |----------|-------------|
-| **Input** | RSS feed monitoring, deduplication, configurable history retention |
+| **Input** | RSS feed monitoring, URL & semantic deduplication, configurable retention |
 | **Processing** | LLM filtering, topic grouping, intelligent summarization |
 | **Output** | Slack, email, web dashboard, console, REST API |
 | **LLM Providers** | OpenAI (GPT-4/5), Anthropic (Claude), Google (Gemini), xAI (Grok) |
 | **Analytics** | Token usage tracking, cost estimation, response time monitoring |
 | **History** | SQLite storage, natural language queries, trend analysis, data export |
+| **Deduplication** | URL-based + embedding-based semantic similarity detection |
 
 ## Current Version
 
-**v2.1** — Released January 2026
+**v2.2** — Released January 2026
 
+- **Semantic deduplication** using OpenAI embeddings to detect similar stories
 - Multi-provider LLM support with seamless switching
 - Token usage monitoring and cost tracking
-- 285 automated tests
+- 321 automated tests
 - Production-ready Docker deployment
 
 ## Installation
@@ -108,7 +110,60 @@ This will run the process every 120 minutes and send updates to Slack.
 --port PORT                         Port for web dashboard (default: 5001)
 --history-retention DAYS            Number of days to retain article history (default: 30)
 --ignore-history                    Ignore article history (process all articles)
+--no-semantic-dedup                 Disable semantic deduplication
 --interval MINUTES                  Interval in minutes between scheduled runs
+```
+
+## Semantic Deduplication
+
+The application uses embedding-based semantic similarity to detect duplicate stories across different sources. This reduces repetitive content where the same news event is reported by multiple outlets with different URLs.
+
+### How It Works
+
+1. **Extract key text**: For each article, the title and first sentence of the summary are combined
+2. **Generate embeddings**: OpenAI's `text-embedding-3-small` model creates a vector representation
+3. **Compare against history**: New articles are compared to embeddings from the last 7 days
+4. **Filter duplicates**: Articles with similarity above the threshold (default 0.85) are filtered out
+5. **Store for future**: Unique articles have their embeddings stored for future comparisons
+
+### Configuration
+
+```bash
+# Enable/disable semantic deduplication (default: enabled)
+ENABLE_SEMANTIC_DEDUP=true
+
+# Similarity threshold (0.0 to 1.0, default: 0.85)
+# Higher = stricter (fewer duplicates caught)
+# Lower = more aggressive (may filter distinct stories)
+SIMILARITY_THRESHOLD=0.85
+
+# Days to look back for comparison (default: 7)
+DEDUP_LOOKBACK_DAYS=7
+
+# Days to retain embeddings (default: 30)
+EMBEDDING_RETENTION_DAYS=30
+
+# Embedding model (default: text-embedding-3-small)
+EMBEDDING_MODEL=text-embedding-3-small
+```
+
+### Cost
+
+Semantic deduplication adds minimal cost:
+- `text-embedding-3-small` costs $0.02 per million tokens
+- Typical article text: ~60 tokens
+- 100 articles/day: ~$0.00012/day (~$0.004/month)
+
+### Disabling
+
+To disable semantic deduplication:
+
+```bash
+# Via command line
+python src/main.py --output slack --no-semantic-dedup
+
+# Via environment variable
+ENABLE_SEMANTIC_DEDUP=false
 ```
 
 ## Configuration
@@ -460,7 +515,7 @@ ls -lh /var/lib/rss-news-ai/data/history.db
 │                    Processing Pipeline                       │
 ├─────────────────────────────────────────────────────────────┤
 │  rss_reader.py      │  llm_filter.py    │  summarizer.py   │
-│  article_history.py │  query_engine.py  │                  │
+│  article_history.py │  embeddings.py    │  query_engine.py │
 └─────────────────────────────┬───────────────────────────────┘
                               │
                               ▼
@@ -487,7 +542,8 @@ ls -lh /var/lib/rss-news-ai/data/history.db
 | `rss_reader.py` | RSS feed fetching and parsing |
 | `llm_filter.py` | LLM-based article filtering |
 | `summarizer.py` | Topic grouping and summarization |
-| `article_history.py` | Deduplication and history management |
+| `article_history.py` | URL-based deduplication and history |
+| `embeddings.py` | Semantic deduplication with embeddings |
 | `history_db.py` | SQLite database operations |
 | `query_engine.py` | Natural language query processing |
 | `history_cli.py` | CLI for historical queries |
