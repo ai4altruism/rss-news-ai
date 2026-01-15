@@ -2,11 +2,11 @@
 
 ## Document Information
 - **Version**: 1.0
-- **Last Updated**: 2026-01-10
+- **Last Updated**: 2026-01-15
 - **Sprint Duration**: 1-2 weeks
 - **Source Documents**:
   - README.md
-  - Sprint Summaries (Sprint 1-6)
+  - Sprint Summaries (Sprint 1-13)
 
 ## 1. Project Overview
 
@@ -37,7 +37,7 @@ RSS News AI is a Python-based application that monitors RSS feeds for generative
 | Sprint 10: Google Gemini Integration | 2 weeks | **Complete** | 2026-01-10 |
 | Sprint 11: Provider Testing & Hardening | 1 week | **Complete** | 2026-01-11 |
 | Sprint 12: Token Usage Monitoring | 1 week | **Complete** | 2026-01-12 |
-| Sprint 13: Semantic Deduplication | 1 week | Planned | - |
+| Sprint 13: Semantic Deduplication | 1 week | **Complete** | 2026-01-12 |
 
 ## 2. Team and Resources
 
@@ -1119,11 +1119,13 @@ For `call_llm()` users (most code), no changes needed as it still returns `str`.
 
 ---
 
-### Sprint 13: Semantic Deduplication (PLANNED)
+### Sprint 13: Semantic Deduplication (COMPLETE)
 **Goal**: Reduce repetitive content across hourly updates by using embedding-based similarity detection to filter semantically duplicate articles before LLM processing.
 
 **Duration**: 1 week
-**Status**: Planned
+**Status**: ✅ Complete
+**Completed**: 2026-01-12
+**Tests**: 36 new tests (321 total)
 
 #### Problem Statement
 The current deduplication in `article_history.py` uses exact URL matching. This misses:
@@ -1639,7 +1641,7 @@ Total LLM call points: **4** (all in critical paths)
 
 ## Summary
 
-This Software Development Plan documents Sprints 1-13. Sprints 1-12 are complete; Sprint 13 is planned.
+This Software Development Plan documents Sprints 1-13, all of which are complete.
 
 **Completed:**
 1. **Sprints 1-6**: Core features (database, CLI, LLM query, web UI, security)
@@ -1649,17 +1651,18 @@ This Software Development Plan documents Sprints 1-13. Sprints 1-12 are complete
 5. **Sprint 10**: Google Gemini integration (Generative Language API)
 6. **Sprint 11**: Comprehensive cross-provider testing and documentation
 7. **Sprint 12**: Token usage monitoring with cost tracking
-
-**Planned:**
 8. **Sprint 13**: Semantic deduplication using embeddings
+
+**All 13 sprints complete!**
 
 The design achieved:
 - **Backward compatibility**: Existing configurations continue to work
 - **Clean abstraction**: Provider details hidden behind common interface
 - **Flexibility**: Mix and match providers for different tasks
-- **Testing**: 285 tests across all components
+- **Testing**: 321 tests across all components
 - **Documentation**: Clear guides for each provider
 - **Usage Monitoring**: Track tokens, costs, and response times per LLM call
+- **Semantic Deduplication**: Filter duplicate stories across sources using embeddings
 
 Users can configure any combination of OpenAI, xAI, Anthropic, and Google models for filtering, grouping, summarization, and querying tasks, with full usage tracking and cost analysis.
 
