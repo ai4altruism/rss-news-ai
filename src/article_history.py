@@ -91,24 +91,31 @@ class ArticleHistory:
             logging.debug(f"Article already published: {article.get('title', 'Untitled')}")
         return is_pub
 
-    def mark_as_published(self, articles):
+    def mark_as_published(self, articles, status="published"):
         """
-        Mark articles as published.
+        Mark articles as seen so they are not reprocessed.
 
         Parameters:
             articles (list): List of article dictionaries with at least 'link' key
+            status (str): "published" (delivered to an output) or "rejected"
+                (LLM filter said no). Both suppress reprocessing; the status
+                field only aids debugging. Articles whose processing errored
+                should NOT be marked, so they retry on the next run.
         """
         now = datetime.now().isoformat()
 
         for article in articles:
             url = article.get("link", "")
             if url:
-                self.history["articles"][url] = {
+                entry = {
                     "title": article.get("title", ""),
                     "timestamp": now,
                 }
+                if status != "published":
+                    entry["status"] = status
+                self.history["articles"][url] = entry
 
-        logging.info(f"Marked {len(articles)} articles as published")
+        logging.info(f"Marked {len(articles)} articles as {status}")
         self._save_history()
         self._clean_old_entries()
 

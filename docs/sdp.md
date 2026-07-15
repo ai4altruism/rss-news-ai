@@ -38,6 +38,7 @@ RSS News AI is a Python-based application that monitors RSS feeds for generative
 | Sprint 11: Provider Testing & Hardening | 1 week | **Complete** | 2026-01-11 |
 | Sprint 12: Token Usage Monitoring | 1 week | **Complete** | 2026-01-12 |
 | Sprint 13: Semantic Deduplication | 1 week | **Complete** | 2026-01-12 |
+| Sprint 14: Delivery Reliability Hardening | 1 week | **Complete** | 2026-07-15 |
 
 ## 2. Team and Resources
 

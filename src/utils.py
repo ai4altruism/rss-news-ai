@@ -152,35 +152,45 @@ def call_responses_api(
 
 def setup_logger():
     """
-    Sets up a logger to log to both the console and a file in the logs directory.
+    Sets up logging to both the console and a file in the logs directory.
+
+    Handlers are attached to the ROOT logger so that module-level
+    logging.error(...) calls from llm_filter, summarizer, slack_publisher
+    etc. reach app.log too — previously only the named "RSSFeedMonitor"
+    logger was configured and submodule errors were lost with the
+    container's stdout.
 
     Returns:
-        logger (logging.Logger): Configured logger instance.
+        logger (logging.Logger): The "RSSFeedMonitor" logger (propagates
+        to the root handlers).
     """
+    root = logging.getLogger()
+    root.setLevel(logging.INFO)
+
+    # Idempotent: scheduler and main both call this in one process tree
+    if not root.handlers:
+        # Create logs directory if it doesn't exist
+        if not os.path.exists("logs"):
+            os.makedirs("logs")
+
+        # File handler for logging to a file
+        file_handler = logging.FileHandler("logs/app.log")
+        file_handler.setLevel(logging.INFO)
+
+        # Console handler for logging to the console
+        console_handler = logging.StreamHandler()
+        console_handler.setLevel(logging.INFO)
+
+        # Formatter to include timestamp, module, level, and message
+        formatter = logging.Formatter(
+            "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+        )
+        file_handler.setFormatter(formatter)
+        console_handler.setFormatter(formatter)
+
+        root.addHandler(file_handler)
+        root.addHandler(console_handler)
+
     logger = logging.getLogger("RSSFeedMonitor")
     logger.setLevel(logging.INFO)
-
-    # Create logs directory if it doesn't exist
-    if not os.path.exists("logs"):
-        os.makedirs("logs")
-
-    # File handler for logging to a file
-    file_handler = logging.FileHandler("logs/app.log")
-    file_handler.setLevel(logging.INFO)
-
-    # Console handler for logging to the console
-    console_handler = logging.StreamHandler()
-    console_handler.setLevel(logging.INFO)
-
-    # Formatter to include timestamp, module, level, and message
-    formatter = logging.Formatter(
-        "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-    )
-    file_handler.setFormatter(formatter)
-    console_handler.setFormatter(formatter)
-
-    # Add both handlers to the logger
-    logger.addHandler(file_handler)
-    logger.addHandler(console_handler)
-
     return logger

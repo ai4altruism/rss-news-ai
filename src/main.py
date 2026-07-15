@@ -35,9 +35,10 @@ except ImportError:
     init_database = None
 
 try:
-    from embeddings import filter_semantic_duplicates
+    from embeddings import filter_semantic_duplicates, persist_embeddings
 except ImportError:
     filter_semantic_duplicates = None
+    persist_embeddings = None
 
 
 def parse_arguments():
@@ -53,13 +54,16 @@ def parse_arguments():
         "--web-server", action="store_true", help="Run the web dashboard server"
     )
     parser.add_argument(
-        "--port", type=int, default=5001, help="Port for web dashboard (default: 5001)"
+        "--port",
+        type=int,
+        default=None,
+        help="Port for web dashboard (default: WEB_DASHBOARD_PORT in .env, or 5001)",
     )
     parser.add_argument(
         "--history-retention",
         type=int,
-        default=30,
-        help="Number of days to retain article history (default: 30)",
+        default=None,
+        help="Number of days to retain article history (default: HISTORY_RETENTION_DAYS in .env, or 30)",
     )
     parser.add_argument(
         "--ignore-history",
@@ -102,8 +106,15 @@ def main():
     summarize_model = env_vars.get("SUMMARIZE_MODEL", "gpt-4o-mini")
 
     # Get history retention period from args or env
-    history_retention_days = args.history_retention or int(
-        env_vars.get("HISTORY_RETENTION_DAYS", 14)
+    history_retention_days = (
+        args.history_retention
+        if args.history_retention is not None
+        else int(env_vars.get("HISTORY_RETENTION_DAYS", 30))
+    )
+
+    # Get web dashboard port from args or env
+    web_port = (
+        args.port if args.port is not None else int(env_vars.get("WEB_DASHBOARD_PORT", 5001))
     )
 
     if not openai_api_key:
@@ -112,8 +123,8 @@ def main():
 
     # Check if we should run the web server only
     if args.web_server and run_dashboard:
-        logger.info(f"Starting web dashboard server on port {args.port}...")
-        run_dashboard(port=args.port, debug=True)
+        logger.info(f"Starting web dashboard server on port {web_port}...")
+        run_dashboard(port=web_port, debug=False)
         return
 
     # Initialize article history
@@ -152,20 +163,32 @@ def main():
         logger.info("Article history check skipped (--ignore-history flag used).")
         unique_articles = articles
 
-    # Semantic deduplication (embedding-based duplicate detection)
+    # Semantic deduplication (embedding-based duplicate detection).
+    # Embedding persistence is deferred: an embedding is stored only once
+    # its article's fate is decided (delivered, or rejected by the LLM
+    # filter). Persisting earlier would let a failed run permanently
+    # suppress its articles — on the next run they would match their own
+    # stored embedding and be dropped as duplicates.
     semantic_dedup_enabled = (
         filter_semantic_duplicates is not None
         and not args.no_semantic_dedup
         and env_vars.get("ENABLE_SEMANTIC_DEDUP", "true").lower() == "true"
     )
 
+    pending_embeddings = []
     if semantic_dedup_enabled and unique_articles:
         logger.info("Running semantic deduplication...")
         try:
             unique_articles, dedup_stats = filter_semantic_duplicates(
                 articles=unique_articles,
                 api_key=openai_api_key,
+                similarity_threshold=float(env_vars.get("SIMILARITY_THRESHOLD", 0.85)),
+                lookback_days=int(env_vars.get("DEDUP_LOOKBACK_DAYS", 7)),
+                embedding_model=env_vars.get("EMBEDDING_MODEL", "text-embedding-3-small"),
+                retention_days=int(env_vars.get("EMBEDDING_RETENTION_DAYS", 30)),
+                defer_saves=True,
             )
+            pending_embeddings = dedup_stats.get("pending_embeddings", [])
             logger.info(
                 f"Semantic dedup: {dedup_stats['duplicates']} duplicates filtered, "
                 f"{dedup_stats['unique']} unique articles remain"
@@ -174,6 +197,21 @@ def main():
             logger.warning(f"Semantic deduplication failed (continuing without): {e}")
     elif not semantic_dedup_enabled:
         logger.debug("Semantic deduplication disabled or not available")
+
+    pending_by_url = {e["url"]: e for e in pending_embeddings}
+
+    def persist_embeddings_for(article_list):
+        """Persist deferred embeddings for the given articles' URLs."""
+        if not persist_embeddings:
+            return
+        entries = [
+            pending_by_url[a.get("link")]
+            for a in article_list
+            if a.get("link") in pending_by_url
+        ]
+        if entries:
+            saved = persist_embeddings(entries)
+            logger.info(f"Persisted {saved} article embeddings.")
 
     # If no articles remain after deduplication, exit early
     if not unique_articles:
@@ -190,10 +228,36 @@ def main():
 
     # Filter articles using LLM
     logger.info("Filtering articles using LLM...")
-    filtered_articles = filter_stories(
+    filtered_articles, rejected_articles, errored_articles = filter_stories(
         unique_articles, filter_prompt, filter_model, openai_api_key
     )
-    logger.info(f"{len(filtered_articles)} articles remain after filtering.")
+    logger.info(
+        f"{len(filtered_articles)} articles remain after filtering "
+        f"({len(rejected_articles)} rejected, "
+        f"{len(errored_articles)} errored and will be retried next run)."
+    )
+
+    # Record rejected articles so they are not re-filtered on every run,
+    # and persist their embeddings so future near-duplicates from other
+    # outlets stay suppressed. Errored articles are deliberately left
+    # unrecorded so they get retried.
+    if rejected_articles:
+        if not args.ignore_history:
+            article_history.mark_as_published(rejected_articles, status="rejected")
+        persist_embeddings_for(rejected_articles)
+
+    # If no articles remain after filtering, exit early without sending reports
+    if not filtered_articles:
+        logger.info("No articles passed the LLM filter.")
+        empty_summary = {
+            "topics": [],
+            "message": "No relevant articles found since last update.",
+        }
+        if args.output == "web" and save_summary:
+            save_summary(empty_summary)
+        if args.output == "console":
+            print(json.dumps(empty_summary, indent=4))
+        return
 
     # Group and summarize
     logger.info("Grouping and summarizing articles...")
@@ -201,38 +265,23 @@ def main():
         filtered_articles, group_model, summarize_model, openai_api_key
     )
 
-    # Save to historical database (non-fatal if it fails)
-    if save_summary_to_db:
-        try:
-            summary_id = save_summary_to_db(summary)
-            if summary_id:
-                logger.info(f"Summary saved to historical database (ID: {summary_id})")
-            else:
-                logger.warning("Failed to save summary to historical database")
-        except Exception as e:
-            logger.warning(f"Could not save to historical database: {e}")
+    # Output handling based on selected method. Articles are marked as
+    # published (and their embeddings persisted) only after the selected
+    # output succeeds, so a failed delivery is retried on the next run
+    # instead of being silently lost.
+    delivered = False
 
-    # Mark articles as published only if successfully processed and history tracking is enabled
-    if filtered_articles and not args.ignore_history:
-        article_history.mark_as_published(filtered_articles)
-        logger.info(f"Marked {len(filtered_articles)} articles as published.")
-
-    # Output handling based on selected method
     if args.output == "console" or args.output == "web":
         # Output the structured JSON summary to console
         output_json = json.dumps(summary, indent=4)
         logger.info("Summary generated:")
         print(output_json)
+        delivered = True
 
         # Save for web dashboard if requested
         if args.output == "web" and save_summary:
             save_summary(summary)
             logger.info("Summary saved for web dashboard.")
-
-            # Run web server if requested
-            if run_dashboard:
-                logger.info(f"Starting web dashboard server on port {args.port}...")
-                run_dashboard(port=args.port, debug=True, use_reloader=False)
 
     elif args.output == "slack":
         if not summary.get("topics") or len(summary.get("topics")) == 0:
@@ -246,11 +295,13 @@ def main():
                     return
 
                 logger.info("Publishing to Slack...")
-                success = publish_to_slack(summary, slack_webhook)
-                if success:
+                delivered = publish_to_slack(summary, slack_webhook)
+                if delivered:
                     logger.info("Successfully published to Slack.")
                 else:
-                    logger.error("Failed to publish to Slack.")
+                    logger.error(
+                        "Failed to publish to Slack. Articles will be retried next run."
+                    )
             else:
                 logger.error(
                     "Slack publisher module not available. Install required dependencies."
@@ -267,7 +318,11 @@ def main():
                 "use_tls": env_vars.get("SMTP_USE_TLS", "True").lower() == "true",
             }
 
-            recipients = env_vars.get("EMAIL_RECIPIENTS", "").split(",")
+            recipients = [
+                r.strip()
+                for r in env_vars.get("EMAIL_RECIPIENTS", "").split(",")
+                if r.strip()
+            ]
 
             if not all(
                 [
@@ -284,15 +339,39 @@ def main():
                 return
 
             logger.info(f"Sending email to {len(recipients)} recipients...")
-            success = send_email(summary, smtp_config, recipients)
-            if success:
+            delivered = send_email(summary, smtp_config, recipients)
+            if delivered:
                 logger.info("Email sent successfully.")
             else:
-                logger.error("Failed to send email.")
+                logger.error("Failed to send email. Articles will be retried next run.")
         else:
             logger.error(
                 "Email reporter module not available. Install required dependencies."
             )
+
+    # Post-delivery bookkeeping: only a delivered article is committed to
+    # history and the embedding store.
+    if delivered:
+        if not args.ignore_history:
+            article_history.mark_as_published(filtered_articles)
+            logger.info(f"Marked {len(filtered_articles)} articles as published.")
+        persist_embeddings_for(filtered_articles)
+
+        # Save to historical database (non-fatal if it fails)
+        if save_summary_to_db:
+            try:
+                summary_id = save_summary_to_db(summary)
+                if summary_id:
+                    logger.info(f"Summary saved to historical database (ID: {summary_id})")
+                else:
+                    logger.warning("Failed to save summary to historical database")
+            except Exception as e:
+                logger.warning(f"Could not save to historical database: {e}")
+
+    # Run web server if requested (after history bookkeeping — this call blocks)
+    if args.output == "web" and delivered and run_dashboard:
+        logger.info(f"Starting web dashboard server on port {web_port}...")
+        run_dashboard(port=web_port, debug=False, use_reloader=False)
 
 
 if __name__ == "__main__":

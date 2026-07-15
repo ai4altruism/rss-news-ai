@@ -74,7 +74,9 @@ class OpenAIProvider(BaseProvider):
         if instructions:
             data["instructions"] = instructions
 
-        resp = requests.post(self.API_URL, headers=headers, json=data)
+        # (connect, read) timeout: a hung socket must not stall the whole
+        # scheduler; reasoning models can legitimately take a while
+        resp = requests.post(self.API_URL, headers=headers, json=data, timeout=(10, 180))
 
         # Calculate response time
         response_time_ms = int((time.time() - start_time) * 1000)

@@ -68,7 +68,7 @@ class XAIProvider(BaseProvider):
             "temperature": temperature,
         }
 
-        resp = requests.post(self.API_URL, headers=headers, json=data)
+        resp = requests.post(self.API_URL, headers=headers, json=data, timeout=(10, 180))
 
         # Calculate response time
         response_time_ms = int((time.time() - start_time) * 1000)

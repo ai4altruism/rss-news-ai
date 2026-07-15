@@ -75,7 +75,7 @@ class AnthropicProvider(BaseProvider):
         clamped_temp = max(0.0, min(1.0, temperature))
         data["temperature"] = clamped_temp
 
-        resp = requests.post(self.API_URL, headers=headers, json=data)
+        resp = requests.post(self.API_URL, headers=headers, json=data, timeout=(10, 180))
 
         # Calculate response time
         response_time_ms = int((time.time() - start_time) * 1000)

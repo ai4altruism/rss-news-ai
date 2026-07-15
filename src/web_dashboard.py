@@ -614,4 +614,6 @@ def run_dashboard(host='0.0.0.0', port=5002, debug=False, use_reloader=False):
     app.run(host=host, port=port, debug=debug, use_reloader=use_reloader)
 
 if __name__ == "__main__":
-    run_dashboard(debug=True)
+    # debug=True would expose the Werkzeug debugger (remote code execution)
+    # on 0.0.0.0 — never enable it outside a trusted dev machine.
+    run_dashboard(debug=False)
