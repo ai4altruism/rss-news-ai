@@ -79,4 +79,20 @@ def fetch_feeds(rss_feed_urls):
             logging.error(f"Exception fetching feed {url}: {e}")
 
     save_cache(cache)
-    return articles
+
+    # Drop exact-link duplicates across feeds (e.g. an aggregator feed
+    # carrying the same URL as the publisher's own feed), keeping the
+    # first occurrence.
+    seen_links = set()
+    deduped = []
+    for article in articles:
+        link = article.get("link", "")
+        if link and link in seen_links:
+            continue
+        seen_links.add(link)
+        deduped.append(article)
+    if len(deduped) < len(articles):
+        logging.info(
+            f"Dropped {len(articles) - len(deduped)} exact-link duplicates across feeds"
+        )
+    return deduped

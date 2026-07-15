@@ -225,6 +225,7 @@ def find_similar_articles(
     new_embedding: np.ndarray,
     recent_embeddings: List[Dict[str, Any]],
     threshold: float = DEFAULT_SIMILARITY_THRESHOLD,
+    exclude_url: Optional[str] = None,
 ) -> List[Tuple[str, float, str]]:
     """
     Find articles similar to the new embedding.
@@ -233,6 +234,9 @@ def find_similar_articles(
         new_embedding: Embedding vector for the new article
         recent_embeddings: List of dicts with 'url', 'title', 'embedding' (bytes)
         threshold: Minimum similarity score to consider as duplicate
+        exclude_url: URL to skip in comparisons. An article must never be
+            suppressed as a duplicate of itself (e.g. its embedding was
+            stored by a run that later failed before delivery).
 
     Returns:
         List of (url, similarity_score, title) for articles exceeding threshold
@@ -240,6 +244,8 @@ def find_similar_articles(
     similar = []
 
     for stored in recent_embeddings:
+        if exclude_url and stored.get("url") == exclude_url:
+            continue
         # Deserialize stored embedding from bytes
         stored_embedding = np.frombuffer(stored["embedding"], dtype=np.float32)
 
@@ -264,13 +270,16 @@ def filter_semantic_duplicates(
     lookback_days: Optional[int] = None,
     embedding_model: Optional[str] = None,
     db_path: Optional[str] = None,
+    retention_days: Optional[int] = None,
+    defer_saves: bool = False,
 ) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
     """
     Filter out semantically duplicate articles.
 
     Main entry point for semantic deduplication. Compares new articles
-    against recent embeddings stored in the database, filters duplicates,
-    and stores embeddings for new unique articles.
+    against recent embeddings stored in the database and filters duplicates.
+    Embeddings for unique articles are stored immediately unless
+    defer_saves is set.
 
     Args:
         articles: List of article dicts to filter
@@ -279,6 +288,13 @@ def filter_semantic_duplicates(
         lookback_days: Days to look back for duplicate comparison
         embedding_model: OpenAI embedding model to use
         db_path: Optional database path override
+        retention_days: Days to retain stored embeddings
+        defer_saves: When True, do not persist embeddings; return them in
+            stats["pending_embeddings"] for the caller to persist via
+            persist_embeddings() once the article's fate is decided
+            (delivered or LLM-rejected). Persisting before delivery means
+            a failed run permanently suppresses its articles: on the next
+            run they match their own stored embedding and are dropped.
 
     Returns:
         Tuple of:
@@ -286,7 +302,10 @@ def filter_semantic_duplicates(
         - Stats dict with filtering information
     """
     if not articles:
-        return [], {"total": 0, "unique": 0, "duplicates": 0, "filtered": []}
+        return [], {
+            "total": 0, "unique": 0, "duplicates": 0,
+            "filtered": [], "pending_embeddings": [],
+        }
 
     # Get configuration from environment or use defaults
     threshold = similarity_threshold or float(
@@ -318,6 +337,7 @@ def filter_semantic_duplicates(
 
     unique_articles = []
     filtered_info = []
+    pending_embeddings = []
 
     for article, embedding, embed_text in zip(articles, embeddings, embedding_texts):
         if embedding is None:
@@ -328,8 +348,11 @@ def filter_semantic_duplicates(
             unique_articles.append(article)
             continue
 
-        # Check for similar articles
-        similar = find_similar_articles(embedding, recent, threshold)
+        # Check for similar articles (never against the article's own URL —
+        # a failed earlier run may have stored it already)
+        similar = find_similar_articles(
+            embedding, recent, threshold, exclude_url=article.get("link", "")
+        )
 
         if similar:
             # Article is a duplicate
@@ -349,18 +372,22 @@ def filter_semantic_duplicates(
             # Article is unique
             unique_articles.append(article)
 
-            # Store embedding for future comparisons
+            # Store embedding for future comparisons (deferred to the
+            # caller when defer_saves is set)
             url = article.get("link", "")
             title = article.get("title", "")
             if url:
-                save_article_embedding(
-                    url=url,
-                    title=title,
-                    lead_text=embed_text,
-                    embedding=embedding.tobytes(),
-                    embedding_model=model,
-                    db_path=db_path,
-                )
+                entry = {
+                    "url": url,
+                    "title": title,
+                    "lead_text": embed_text,
+                    "embedding": embedding.tobytes(),
+                    "embedding_model": model,
+                }
+                if defer_saves:
+                    pending_embeddings.append(entry)
+                else:
+                    persist_embeddings([entry], db_path=db_path)
                 # Add to recent list for checking remaining articles
                 recent.append({
                     "url": url,
@@ -369,9 +396,10 @@ def filter_semantic_duplicates(
                 })
 
     # Cleanup old embeddings periodically
-    retention_days = int(
-        os.environ.get("EMBEDDING_RETENTION_DAYS", DEFAULT_RETENTION_DAYS)
-    )
+    if retention_days is None:
+        retention_days = int(
+            os.environ.get("EMBEDDING_RETENTION_DAYS", DEFAULT_RETENTION_DAYS)
+        )
     cleanup_old_embeddings(days=retention_days, db_path=db_path)
 
     stats = {
@@ -381,6 +409,7 @@ def filter_semantic_duplicates(
         "tokens_used": total_tokens,
         "threshold": threshold,
         "filtered": filtered_info,
+        "pending_embeddings": pending_embeddings,
     }
 
     logging.info(
@@ -390,3 +419,39 @@ def filter_semantic_duplicates(
     )
 
     return unique_articles, stats
+
+
+def persist_embeddings(
+    pending: List[Dict[str, Any]],
+    db_path: Optional[str] = None,
+) -> int:
+    """
+    Persist embeddings deferred by filter_semantic_duplicates(defer_saves=True).
+
+    Call once an article's fate is decided: after successful delivery, or
+    when the LLM filter rejects it (so future near-duplicates stay
+    suppressed). Articles lost to run failures keep no embedding and are
+    retried in full on the next run.
+
+    Args:
+        pending: Entries from stats["pending_embeddings"]
+        db_path: Optional database path override
+
+    Returns:
+        Number of embeddings persisted
+    """
+    saved = 0
+    for entry in pending:
+        try:
+            save_article_embedding(
+                url=entry["url"],
+                title=entry["title"],
+                lead_text=entry["lead_text"],
+                embedding=entry["embedding"],
+                embedding_model=entry["embedding_model"],
+                db_path=db_path,
+            )
+            saved += 1
+        except Exception as e:
+            logging.warning(f"Failed to persist embedding for {entry.get('url')}: {e}")
+    return saved

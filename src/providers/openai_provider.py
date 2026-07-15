@@ -74,7 +74,7 @@ class OpenAIProvider(BaseProvider):
         if instructions:
             data["instructions"] = instructions
 
-        resp = requests.post(self.API_URL, headers=headers, json=data)
+        resp = requests.post(self.API_URL, headers=headers, json=data, timeout=self.REQUEST_TIMEOUT)
 
         # Calculate response time
         response_time_ms = int((time.time() - start_time) * 1000)

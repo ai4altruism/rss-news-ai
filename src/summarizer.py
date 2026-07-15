@@ -4,93 +4,7 @@ import logging
 import json
 import re
 from utils import call_llm
-
-def sanitize_json_string(json_string):
-    """
-    Enhanced sanitization of JSON string to fix common issues that cause parsing failures.
-    """
-    # Remove any markdown artifacts
-    json_string = re.sub(r'^```json\s*', '', json_string)
-    json_string = re.sub(r'^```\s*', '', json_string)
-    json_string = re.sub(r'\s*```$', '', json_string)
-    
-    # Handle common truncation issues
-    if not json_string.strip().endswith('}'):
-        if json_string.count('{') > json_string.count('}'):
-            json_string = json_string + '}'
-    
-    # Fix missing quotes around keys 
-    json_string = re.sub(r'([{,]\s*)([a-zA-Z0-9_]+)(\s*:)', r'\1"\2"\3', json_string)
-    
-    # Fix trailing commas in objects and arrays (common LLM mistake)
-    json_string = re.sub(r',\s*}', '}', json_string)
-    json_string = re.sub(r',\s*\]', ']', json_string)
-    
-    # Fix unterminated strings - find strings that begin with " but don't end with " before a comma or closing brace
-    lines = json_string.split('\n')
-    for i, line in enumerate(lines):
-        if '"' in line:
-            # Count quotes - if odd number and doesn't end with quote before comma/brace
-            if line.count('"') % 2 == 1 and not re.search(r'"[,}\]]?\s*$', line):
-                if ',' in line:
-                    # Add quote before comma
-                    lines[i] = re.sub(r'([^"]*),', r'\1",', line)
-                else:
-                    # Add quote at end
-                    lines[i] = line + '"'
-    
-    json_string = '\n'.join(lines)
-    
-    # Handle improperly escaped quotes within JSON strings
-    json_string = re.sub(r'(?<!")(?<!\\)"(?![:,}\]])', r'\"', json_string)
-
-    # Ensure we have a complete JSON object
-    json_string = json_string.strip()
-    if not json_string.startswith('{'):
-        json_string = '{' + json_string
-    if not json_string.endswith('}'):
-        json_string = json_string + '}'
-        
-    return json_string
-
-def validate_json(json_string):
-    """
-    Attempt to validate and fix JSON if possible.
-
-    Returns:
-        (is_valid: bool, result: dict or str)
-    """
-    try:
-        parsed = json.loads(json_string)
-        return True, parsed
-    except json.JSONDecodeError as e:
-        logging.warning(f"Initial JSON parsing failed: {e}")
-
-        # First sanitization attempt
-        sanitized = sanitize_json_string(json_string)
-        try:
-            parsed = json.loads(sanitized)
-            logging.info("JSON sanitization resolved parsing issues")
-            return True, parsed
-        except json.JSONDecodeError as e:
-            logging.error(f"JSON parsing still failed after sanitization: {e}")
-            
-            # Final fallback - attempt to extract any valid JSON object
-            try:
-                # Look for patterns like {"topics": [...]} or {topics: [...]}
-                pattern = r'\{[\s\S]*"topics"[\s\S]*\}'
-                match = re.search(pattern, sanitized)
-                if match:
-                    extract = match.group(0)
-                    # Try to fix and parse this extracted content
-                    extract_fixed = sanitize_json_string(extract)
-                    parsed = json.loads(extract_fixed)
-                    logging.info("Extracted partial JSON object with 'topics' key")
-                    return True, parsed
-            except (json.JSONDecodeError, AttributeError) as e2:
-                logging.error(f"Final JSON extraction attempt failed: {e2}")
-            
-            return False, str(e)
+from json_utils import validate_json
 
 def unify_topics(topics_list):
     """
@@ -113,9 +27,16 @@ def unify_topics(topics_list):
 
 def group_and_summarize(articles, group_model, summarize_model, openai_api_key):
     """
-    Groups articles by topic and generates summaries using OpenAI's Responses API,
-    preserving hyperlinks. Unifies topic labels across chunks.
-    
+    Groups articles by topic and generates summaries, preserving hyperlinks.
+    Unifies topic labels across chunks.
+
+    Titles/links in the LLM's grouping output are treated as lookup keys
+    only: each is grounded back to a source article and the published
+    output carries source data verbatim, so a paraphrased title or
+    corrupted link can never reach Slack/email/web. Articles the LLM
+    omits from its grouping response land in a catch-all topic instead
+    of vanishing.
+
     Parameters:
         articles (list): List of filtered article dictionaries.
         group_model (str): Model name for grouping articles.
@@ -164,20 +85,20 @@ Group these articles into topics focused on generative AI. Return ONLY valid JSO
 
 CRITICAL INSTRUCTIONS:
 - Return ONLY valid JSON
-- Double quotes for all keys and strings 
+- Double quotes for all keys and strings
 - No trailing commas in arrays or objects (e.g., [1, 2,] or {{"name": "value",}})
 - No single quotes for strings or keys
 - No code blocks or markdown, just the JSON object
 - No explanation, just plain JSON
 - Always close all brackets and braces
 - Make sure each key-value pair ends with a comma except the last one
+- Copy each title and link EXACTLY as given; include every article exactly once
 
 Here are the articles to group:
 {articles_text}
 """
 
         try:
-            # Call the new Responses API for grouping
             group_raw_output = call_llm(
                 model_config=group_model,
                 prompt=group_prompt,
@@ -188,24 +109,18 @@ Here are the articles to group:
                 task_type="group"
             )
 
-            # Attempt direct JSON parse
-            try:
-                parsed = json.loads(group_raw_output)
-                all_topics.extend(parsed.get("topics", []))
-            except json.JSONDecodeError:
-                # Attempt to fix
-                is_valid, result = validate_json(group_raw_output)
-                if is_valid:
-                    all_topics.extend(result.get("topics", []))
-                else:
-                    logging.error(f"JSON validation failed on chunk {chunk_index + 1}: {result}")
-                    fallback = {
-                        "topic": f"Generative AI Articles Group {chunk_index+1}",
-                        "articles": [
-                            {"title": a.get("title"), "link": a.get("link")} for a in article_chunk
-                        ]
-                    }
-                    all_topics.append(fallback)
+            is_valid, result = validate_json(group_raw_output)
+            if is_valid:
+                all_topics.extend(result.get("topics", []))
+            else:
+                logging.error(f"JSON validation failed on chunk {chunk_index + 1}: {result}")
+                fallback = {
+                    "topic": f"Generative AI Articles Group {chunk_index+1}",
+                    "articles": [
+                        {"title": a.get("title"), "link": a.get("link")} for a in article_chunk
+                    ]
+                }
+                all_topics.append(fallback)
 
         except Exception as e:
             logging.error(f"LLM grouping error for chunk {chunk_index+1}: {e}")
@@ -221,27 +136,79 @@ Here are the articles to group:
     unified_topics = unify_topics(all_topics)
 
     # ----------------------
+    # GROUNDING PHASE
+    # ----------------------
+    # Ground every LLM-emitted article back to a source article. The LLM can
+    # paraphrase titles or corrupt links when echoing them, so titles/links in
+    # its output are lookup keys only — the published output always carries
+    # source data.
+    def _normalize_title(title):
+        return re.sub(r"\s+", " ", (title or "").strip().lower())
+
+    by_link = {a.get("link"): a for a in articles if a.get("link")}
+    by_title = {a.get("title"): a for a in articles if a.get("title")}
+    by_norm_title = {_normalize_title(a.get("title")): a for a in articles if a.get("title")}
+
+    grounded_topics = []
+    placed_ids = set()
+    for topic in unified_topics:
+        grounded = []
+        for stub in topic.get("articles", []):
+            # LLMs occasionally emit bare title strings instead of
+            # {title, link} objects
+            if isinstance(stub, str):
+                stub = {"title": stub}
+            elif not isinstance(stub, dict):
+                logging.warning(
+                    f"Skipping malformed article entry in topic "
+                    f"'{topic.get('topic')}': {stub!r}"
+                )
+                continue
+            src = (
+                by_link.get(stub.get("link"))
+                or by_title.get(stub.get("title"))
+                or by_norm_title.get(_normalize_title(stub.get("title")))
+            )
+            if src is None:
+                logging.warning(
+                    f"Dropping ungroundable article from topic '{topic.get('topic')}': "
+                    f"{stub.get('title')!r}"
+                )
+                continue
+            if id(src) in placed_ids:
+                continue  # already placed in an earlier topic
+            placed_ids.add(id(src))
+            grounded.append(src)
+        if grounded:
+            grounded_topics.append((topic, grounded))
+        else:
+            logging.warning(
+                f"Dropping topic with no groundable articles: '{topic.get('topic')}'"
+            )
+
+    # Articles the LLM omitted from its grouping response would otherwise
+    # never appear in a report even though the filter accepted them —
+    # collect them into a catch-all topic instead of losing them.
+    leftovers = [a for a in articles if id(a) not in placed_ids]
+    if leftovers:
+        logging.warning(
+            f"{len(leftovers)} article(s) missing from LLM grouping; adding catch-all topic."
+        )
+        grounded_topics.append(({"topic": "Additional stories"}, leftovers))
+
+    # ----------------------
     # SUMMARIZATION PHASE
     # ----------------------
-    for topic in unified_topics:
-        articles_in_topic = topic.get("articles", [])
+    for topic, relevant_articles in grounded_topics:
+        # Output articles come straight from source data
+        topic["articles"] = [
+            {"title": a.get("title", "Untitled"), "link": a.get("link", "#")}
+            for a in relevant_articles
+        ]
 
-        if not articles_in_topic:
-            topic["summary"] = "No articles available for summarization."
-            continue
-
-        # Match each short-article dict to the full article in 'articles' to retrieve summary
-        relevant_articles = []
-        for stub in articles_in_topic:
-            match = next((a for a in articles if a.get("title") == stub.get("title")), None)
-            if match:
-                relevant_articles.append(match)
-            else:
-                relevant_articles.append({
-                    "title": stub.get("title", ""),
-                    "link": stub.get("link", ""),
-                    "summary": "No detailed summary available."
-                })
+        fallback_summary = (
+            f"A collection of {len(relevant_articles)} articles about {topic.get('topic')}."
+        )
 
         # Build a combined prompt text from up to 5 articles
         combined_text = "\n\n".join([
@@ -250,7 +217,7 @@ Here are the articles to group:
         ])
 
         if not combined_text.strip():
-            topic["summary"] = f"A collection of {len(articles_in_topic)} articles about {topic.get('topic')}."
+            topic["summary"] = fallback_summary
             continue
 
         summarize_prompt = f"""
@@ -274,15 +241,10 @@ RESPONSE FORMAT: Just one short paragraph.
 
             # Basic cleanup
             summary_text = re.sub(r'\s+', ' ', summary_text).strip()
-            if not summary_text:
-                summary_text = f"A collection of {len(articles_in_topic)} articles about {topic.get('topic')}."
-            topic["summary"] = summary_text
+            topic["summary"] = summary_text or fallback_summary
 
         except Exception as e:
             logging.error(f"LLM summarization error for topic '{topic.get('topic')}': {e}")
-            topic["summary"] = f"A collection of {len(articles_in_topic)} articles about {topic.get('topic')}."
+            topic["summary"] = fallback_summary
 
-        # Restore the final article array with minimal keys
-        topic["articles"] = [{"title": s.get("title", "Untitled"), "link": s.get("link", "#")} for s in articles_in_topic]
-
-    return {"topics": unified_topics}
+    return {"topics": [topic for topic, _ in grounded_topics]}

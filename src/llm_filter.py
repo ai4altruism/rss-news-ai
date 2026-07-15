@@ -4,49 +4,7 @@ import logging
 import json
 import re
 from utils import call_llm
-
-def sanitize_json_string(json_string):
-    """
-    Enhanced sanitization of JSON string to fix common issues that cause parsing failures.
-    """
-    # Remove markdown fences
-    json_string = re.sub(r'^```(\w+)?', '', json_string)
-    json_string = re.sub(r'```$', '', json_string)
-    
-    # Handle common truncation issues
-    if not json_string.strip().endswith('}'):
-        if json_string.count('{') > json_string.count('}'):
-            json_string = json_string + '}'
-    
-    # Fix missing quotes around keys 
-    json_string = re.sub(r'([{,]\s*)([a-zA-Z0-9_]+)(\s*:)', r'\1"\2"\3', json_string)
-    
-    # Fix trailing commas in objects and arrays (common LLM mistake)
-    json_string = re.sub(r',\s*}', '}', json_string)
-    json_string = re.sub(r',\s*\]', ']', json_string)
-    
-    # Fix unterminated strings - find strings that begin with " but don't end with " before a comma or closing brace
-    lines = json_string.split('\n')
-    for i, line in enumerate(lines):
-        if '"' in line:
-            # Count quotes - if odd number and doesn't end with quote before comma/brace
-            if line.count('"') % 2 == 1 and not re.search(r'"[,}\]]?\s*$', line):
-                if ',' in line:
-                    # Add quote before comma
-                    lines[i] = re.sub(r'([^"]*),', r'\1",', line)
-                else:
-                    # Add quote at end
-                    lines[i] = line + '"'
-    
-    json_string = '\n'.join(lines)
-    
-    # Handle improperly escaped quotes within JSON strings
-    json_string = re.sub(r'(?<!")(?<!\\)"(?![:,}\]])', r'\"', json_string)
-
-    # Ensure we have a complete JSON object
-    json_string = json_string.strip()
-    
-    return json_string
+from json_utils import validate_json
 
 def filter_stories(articles, filter_prompt, filter_model, openai_api_key, batch_size=5):
     """
@@ -57,8 +15,12 @@ def filter_stories(articles, filter_prompt, filter_model, openai_api_key, batch_
       2. Build a single JSON-based classification prompt for each batch.
       3. Call the LLM once per batch, instructing it to return valid JSON
          with a yes/no decision for each article.
-      4. If JSON parsing fails, attempt sanitization and re-parse.
-      5. Any article whose decision is 'Yes' gets appended to 'filtered_articles'.
+      4. If JSON parsing fails, attempt safe recovery and re-parse.
+      5. Sort each article into accepted / rejected / errored by decision.
+
+    Every input article lands in exactly one of the three returned lists,
+    so the caller can record rejections (suppress reprocessing) while
+    leaving errored articles unrecorded (retried next run).
 
     Parameters:
         articles (list): List of article dictionaries.
@@ -68,9 +30,15 @@ def filter_stories(articles, filter_prompt, filter_model, openai_api_key, batch_
         batch_size (int): Number of articles per request.
 
     Returns:
-        filtered_articles (list): List of articles that meet the filter criteria.
+        (accepted, rejected, errored): Three lists of article dicts.
+            accepted — LLM said "Yes"
+            rejected — LLM said "No"
+            errored  — the LLM call failed, its output was unparseable, or
+                       its decisions omitted the article
     """
-    filtered_articles = []
+    accepted = []
+    rejected = []
+    errored = []
 
     def chunked(iterable, size):
         for i in range(0, len(iterable), size):
@@ -122,56 +90,86 @@ CRITICAL INSTRUCTIONS:
 - No code blocks or markdown, just the JSON object
 - No explanation, just plain JSON
 - Always close all brackets and braces
+- Include a decision for EVERY article, indices 1 through {len(batch)}
 
 Here are the articles in this batch:
 
 {article_list_text}
 """.strip()
 
+        parsed = None
         try:
             output_text = call_llm(
                 model_config=filter_model,
                 prompt=prompt,
                 api_keys={"openai": openai_api_key},
                 instructions="Output only valid JSON. No extra commentary.",
-                max_tokens=1024,  # Increase token limit
+                max_tokens=1024,
                 temperature=0.0,
                 task_type="filter"
             )
 
-            # Attempt direct JSON parse
-            try:
-                parsed = json.loads(output_text)
-            except json.JSONDecodeError as e:
-                logging.error(f"JSON parsing failed for chunk {chunk_index}: {e}")
-                # Attempt to sanitize
-                cleaned = sanitize_json_string(output_text)
-                try:
-                    parsed = json.loads(cleaned)
-                except json.JSONDecodeError as e2:
-                    logging.error(f"JSON parsing still failed after sanitization for chunk {chunk_index}: {e2}")
-                    
-                    # One more attempt - try to extract just the decisions array using regex
-                    try:
-                        decisions_match = re.search(r'"decisions"\s*:\s*\[(.*?)\]', output_text, re.DOTALL)
-                        if decisions_match:
-                            decisions_json = '{"decisions": [' + decisions_match.group(1) + ']}'
-                            cleaned_decisions = sanitize_json_string(decisions_json)
-                            parsed = json.loads(cleaned_decisions)
-                        else:
-                            parsed = {"decisions": []}
-                    except Exception:
-                        parsed = {"decisions": []}
+            if not output_text or not output_text.strip():
+                raise ValueError("Empty response from filter model")
 
-            # Process decisions
-            for dec in parsed.get("decisions", []):
-                idx = dec.get("index")
-                decision = dec.get("decision", "").lower()
-                # Validate index is in range
-                if idx and 1 <= idx <= len(batch) and "yes" in decision:
-                    filtered_articles.append(batch[idx - 1])
+            is_valid, result = validate_json(output_text)
+            if is_valid:
+                parsed = result
+            else:
+                # Last resort: extract just the decisions array. Safe here
+                # because decision entries contain no free text, only
+                # index/decision pairs.
+                decisions_match = re.search(
+                    r'"decisions"\s*:\s*\[(.*?)\]', output_text, re.DOTALL
+                )
+                if decisions_match:
+                    rebuilt = '{"decisions": [' + decisions_match.group(1) + ']}'
+                    # Trailing-comma repair is safe here (unlike on free text)
+                    # because decision entries contain no prose
+                    rebuilt = re.sub(r',\s*([\]}])', r'\1', rebuilt)
+                    try:
+                        parsed = json.loads(rebuilt)
+                    except json.JSONDecodeError:
+                        parsed = None
+                if parsed is None:
+                    logging.error(
+                        f"Unparseable filter response for chunk {chunk_index}; "
+                        f"articles will be retried next run."
+                    )
 
         except Exception as e:
             logging.error(f"LLM filtering error for chunk {chunk_index}: {e}")
 
-    return filtered_articles
+        if parsed is None:
+            errored.extend(batch)
+            continue
+
+        # Sort articles by decision; anything the LLM omitted or answered
+        # ambiguously counts as errored so it retries next run.
+        decisions_by_index = {}
+        for dec in parsed.get("decisions", []):
+            idx = dec.get("index")
+            # LLMs sometimes emit indices as JSON strings
+            if isinstance(idx, str) and idx.strip().isdigit():
+                idx = int(idx.strip())
+            if isinstance(idx, int) and 1 <= idx <= len(batch):
+                decisions_by_index[idx] = (
+                    str(dec.get("decision", "")).strip().strip('."\'').lower()
+                )
+
+        for idx, article in enumerate(batch, start=1):
+            decision = decisions_by_index.get(idx)
+            # Word-boundary match: accepts verbose forms like
+            # "Yes, highly relevant" but not e.g. "none" as a "no"
+            if decision is not None and re.match(r'yes\b', decision):
+                accepted.append(article)
+            elif decision is not None and re.match(r'no\b', decision):
+                rejected.append(article)
+            else:
+                logging.warning(
+                    f"No usable decision for article {idx} in chunk {chunk_index}; "
+                    f"will retry next run: {article.get('title', 'Untitled')!r}"
+                )
+                errored.append(article)
+
+    return accepted, rejected, errored

@@ -192,7 +192,8 @@ def send_slack_message(webhook_url, blocks):
         response = requests.post(
             webhook_url,
             json=payload,
-            headers={"Content-Type": "application/json"}
+            headers={"Content-Type": "application/json"},
+            timeout=30
         )
         
         if response.status_code == 200:
