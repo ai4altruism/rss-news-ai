@@ -149,9 +149,16 @@ def main():
     # Initialize article history
     article_history = ArticleHistory(retention_days=history_retention_days)
 
-    # Fetch articles
+    # Fetch articles (age guard passes through as None when unset so
+    # rss_reader's default remains the single source of truth)
     logger.info("Fetching RSS feeds...")
-    articles = fetch_feeds(rss_feed_list)
+    articles = fetch_feeds(
+        rss_feed_list,
+        max_age_days=(
+            int(env_vars["MAX_ARTICLE_AGE_DAYS"])
+            if env_vars.get("MAX_ARTICLE_AGE_DAYS") else None
+        ),
+    )
     logger.info(f"Fetched {len(articles)} articles.")
 
     # Filter out previously published articles unless --ignore-history is specified

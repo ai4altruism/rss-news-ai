@@ -432,7 +432,7 @@ def _run_gated_main(tmp_path, monkeypatch, output, slack_ok=True,
 
     persisted_urls = []
 
-    monkeypatch.setattr(main_mod, "fetch_feeds", lambda urls: list(articles))
+    monkeypatch.setattr(main_mod, "fetch_feeds", lambda urls, **kw: list(articles))
     monkeypatch.setattr(
         main_mod, "filter_semantic_duplicates",
         lambda **kw: (list(articles), {
@@ -519,35 +519,82 @@ class TestWebDeliveryGating:
         assert "https://example.com/bad" in recorded
 
 
+class _FakeResponse:
+    status_code = 200
+    text = "<rss/>"
+    headers = {}
+
+
+def _fake_feed_fetch(monkeypatch, tmp_path, entries):
+    """Point rss_reader at a fake feed with the given entries."""
+    import rss_reader
+
+    class FakeFeed:
+        bozo = False
+
+    FakeFeed.entries = entries
+    monkeypatch.chdir(tmp_path)  # keep cache.json in tmp
+    monkeypatch.setattr(rss_reader.requests, "get", lambda *a, **kw: _FakeResponse())
+    monkeypatch.setattr(rss_reader.feedparser, "parse", lambda content: FakeFeed())
+    return rss_reader
+
+
 class TestFeedLinkDedup:
     """fetch_feeds drops exact-link duplicates across feeds."""
 
     def test_same_link_across_feeds_kept_once(self, tmp_path, monkeypatch):
-        import rss_reader
-
-        class FakeFeed:
-            bozo = False
-            entries = [{
-                "title": "Same Story",
-                "link": "https://example.com/same",
-                "summary": "s",
-                "published": "",
-            }]
-
-        class FakeResponse:
-            status_code = 200
-            text = "<rss/>"
-            headers = {}
-
-        monkeypatch.chdir(tmp_path)  # keep cache.json in tmp
-        monkeypatch.setattr(
-            rss_reader.requests, "get", lambda *a, **kw: FakeResponse()
-        )
-        monkeypatch.setattr(
-            rss_reader.feedparser, "parse", lambda content: FakeFeed()
-        )
-
+        rss_reader = _fake_feed_fetch(monkeypatch, tmp_path, [{
+            "title": "Same Story",
+            "link": "https://example.com/same",
+            "summary": "s",
+            "published": "",
+        }])
         articles = rss_reader.fetch_feeds(
             ["https://feed-a.example.com/rss", "https://feed-b.example.com/rss"]
         )
         assert len(articles) == 1
+
+
+class TestFeedAgeGuard:
+    """fetch_feeds skips entries older than max_age_days."""
+
+    @staticmethod
+    def _entries():
+        import time
+        return [
+            {
+                "title": "Fresh",
+                "link": "https://example.com/fresh",
+                "summary": "s",
+                "published": "today",
+                "published_parsed": time.gmtime(),
+            },
+            {
+                "title": "Archive Post",
+                "link": "https://example.com/ancient",
+                "summary": "s",
+                "published": "2020",
+                "published_parsed": time.gmtime(time.time() - 400 * 86400),
+            },
+            {
+                "title": "Undated",
+                "link": "https://example.com/undated",
+                "summary": "s",
+                "published": "",
+            },
+        ]
+
+    def test_stale_entries_skipped_undated_kept(self, tmp_path, monkeypatch):
+        rss_reader = _fake_feed_fetch(monkeypatch, tmp_path, self._entries())
+        articles = rss_reader.fetch_feeds(["https://feed.example.com/rss"])
+        links = [a["link"] for a in articles]
+        assert "https://example.com/fresh" in links
+        assert "https://example.com/undated" in links  # no date → keep
+        assert "https://example.com/ancient" not in links
+
+    def test_zero_disables_guard(self, tmp_path, monkeypatch):
+        rss_reader = _fake_feed_fetch(monkeypatch, tmp_path, self._entries())
+        articles = rss_reader.fetch_feeds(
+            ["https://feed.example.com/rss"], max_age_days=0
+        )
+        assert len(articles) == 3

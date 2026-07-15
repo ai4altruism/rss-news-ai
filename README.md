@@ -200,6 +200,10 @@ PROCESS_INTERVAL=120
 # History Retention (in days)
 HISTORY_RETENTION_DAYS=30
 
+# Skip feed entries older than this many days (0 disables).
+# Guards against archive-style feeds flooding the pipeline.
+MAX_ARTICLE_AGE_DAYS=30
+
 # Output Configuration
 # For Slack output
 SLACK_WEBHOOK_URL=your_slack_webhook_url_here
