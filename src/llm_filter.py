@@ -4,7 +4,7 @@ import logging
 import json
 import re
 from utils import call_llm
-from json_utils import sanitize_json_string, validate_json
+from json_utils import validate_json
 
 def filter_stories(articles, filter_prompt, filter_model, openai_api_key, batch_size=5):
     """
@@ -123,10 +123,12 @@ Here are the articles in this batch:
                     r'"decisions"\s*:\s*\[(.*?)\]', output_text, re.DOTALL
                 )
                 if decisions_match:
+                    rebuilt = '{"decisions": [' + decisions_match.group(1) + ']}'
+                    # Trailing-comma repair is safe here (unlike on free text)
+                    # because decision entries contain no prose
+                    rebuilt = re.sub(r',\s*([\]}])', r'\1', rebuilt)
                     try:
-                        parsed = json.loads(
-                            '{"decisions": [' + decisions_match.group(1) + ']}'
-                        )
+                        parsed = json.loads(rebuilt)
                     except json.JSONDecodeError:
                         parsed = None
                 if parsed is None:
@@ -147,6 +149,9 @@ Here are the articles in this batch:
         decisions_by_index = {}
         for dec in parsed.get("decisions", []):
             idx = dec.get("index")
+            # LLMs sometimes emit indices as JSON strings
+            if isinstance(idx, str) and idx.strip().isdigit():
+                idx = int(idx.strip())
             if isinstance(idx, int) and 1 <= idx <= len(batch):
                 decisions_by_index[idx] = (
                     str(dec.get("decision", "")).strip().strip('."\'').lower()
@@ -154,9 +159,11 @@ Here are the articles in this batch:
 
         for idx, article in enumerate(batch, start=1):
             decision = decisions_by_index.get(idx)
-            if decision == "yes":
+            # Word-boundary match: accepts verbose forms like
+            # "Yes, highly relevant" but not e.g. "none" as a "no"
+            if decision is not None and re.match(r'yes\b', decision):
                 accepted.append(article)
-            elif decision == "no":
+            elif decision is not None and re.match(r'no\b', decision):
                 rejected.append(article)
             else:
                 logging.warning(

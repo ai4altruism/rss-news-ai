@@ -108,6 +108,41 @@ class TestFilterTriage:
         assert len(errored) == 3
 
     @patch("llm_filter.call_llm")
+    def test_verbose_decisions_and_string_indices(self, mock_llm):
+        """Verbose yes/no phrasings and string-typed indices must still
+        be triaged (temperature-0 models repeat them forever otherwise)."""
+        mock_llm.return_value = json.dumps({
+            "decisions": [
+                {"index": "1", "decision": "Yes, highly relevant"},
+                {"index": 2, "decision": "No - not significant"},
+                {"index": 3, "decision": "none"},
+            ]
+        })
+        accepted, rejected, errored = filter_stories(
+            self.ARTICLES, "prompt", "gpt-4o-mini", "key"
+        )
+        assert [a["title"] for a in accepted] == ["Article 1"]
+        assert [a["title"] for a in rejected] == ["Article 2"]
+        # "none" must not be read as "no"
+        assert [a["title"] for a in errored] == ["Article 3"]
+
+    @patch("llm_filter.call_llm")
+    def test_decisions_fallback_repairs_trailing_comma(self, mock_llm):
+        """The regex fallback repairs trailing commas (safe: decisions
+        contain no free text)."""
+        mock_llm.return_value = (
+            'Sure! Here you go: {"decisions": ['
+            '{"index": 1, "decision": "Yes"},'
+            '{"index": 2, "decision": "No"},]}'
+        )
+        accepted, rejected, errored = filter_stories(
+            self.ARTICLES, "prompt", "gpt-4o-mini", "key"
+        )
+        assert [a["title"] for a in accepted] == ["Article 1"]
+        assert [a["title"] for a in rejected] == ["Article 2"]
+        assert [a["title"] for a in errored] == ["Article 3"]
+
+    @patch("llm_filter.call_llm")
     def test_ambiguous_decision_is_errored_not_rejected(self, mock_llm):
         mock_llm.return_value = json.dumps({
             "decisions": [
@@ -189,6 +224,22 @@ class TestGrounding:
         mock_llm.side_effect = side_effect
         result = group_and_summarize(self.ARTICLES, "m", "m", "key")
         all_links = [a["link"] for t in result["topics"] for a in t["articles"]]
+        assert sorted(all_links) == sorted(a["link"] for a in self.ARTICLES)
+
+    @patch("summarizer.call_llm")
+    def test_string_article_stubs_do_not_crash(self, mock_llm):
+        """LLMs occasionally emit bare title strings instead of objects;
+        grounding must handle them instead of raising AttributeError."""
+        mock_llm.side_effect = self._mock_llm(json.dumps({
+            "topics": [{
+                "topic": "AI News",
+                "articles": ["Alpha Story", 42, {"title": "Beta Story",
+                                                 "link": "https://example.com/beta"}],
+            }]
+        }))
+        result = group_and_summarize(self.ARTICLES, "m", "m", "key")
+        all_links = [a["link"] for t in result["topics"] for a in t["articles"]]
+        # Bare string grounds by title; malformed int is skipped; nothing lost
         assert sorted(all_links) == sorted(a["link"] for a in self.ARTICLES)
 
     @patch("summarizer.call_llm")
@@ -354,66 +405,79 @@ class TestRejectedTracking:
         assert "status" not in entry  # format unchanged for published articles
 
 
+ACCEPTED = {"title": "Good", "link": "https://example.com/good", "summary": "s"}
+REJECTED = {"title": "Bad", "link": "https://example.com/bad", "summary": "s"}
+
+
+def _run_gated_main(tmp_path, monkeypatch, output, slack_ok=True,
+                    dashboard_available=True):
+    """Run main() with the pipeline mocked around two articles (one the
+    filter accepts, one it rejects). Returns (history entries, persisted
+    embedding urls)."""
+    import main as main_mod
+
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / ".env").write_text(
+        "OPENAI_API_KEY=test-key\n"
+        "SLACK_WEBHOOK_URL=https://hooks.slack.com/test\n"
+    )
+    monkeypatch.setattr(sys, "argv", ["main.py", "--output", output])
+
+    articles = [ACCEPTED, REJECTED]
+    pending = [
+        {"url": a["link"], "title": a["title"], "lead_text": "t",
+         "embedding": b"\x00", "embedding_model": "m"}
+        for a in articles
+    ]
+
+    persisted_urls = []
+
+    monkeypatch.setattr(main_mod, "fetch_feeds", lambda urls: list(articles))
+    monkeypatch.setattr(
+        main_mod, "filter_semantic_duplicates",
+        lambda **kw: (list(articles), {
+            "total": 2, "unique": 2, "duplicates": 0,
+            "filtered": [], "pending_embeddings": pending,
+        }),
+    )
+    monkeypatch.setattr(
+        main_mod, "persist_embeddings",
+        lambda entries, db_path=None: persisted_urls.extend(
+            e["url"] for e in entries) or len(entries),
+    )
+    monkeypatch.setattr(
+        main_mod, "filter_stories",
+        lambda *a, **kw: ([ACCEPTED], [REJECTED], []),
+    )
+    monkeypatch.setattr(
+        main_mod, "group_and_summarize",
+        lambda *a, **kw: {"topics": [{
+            "topic": "T", "summary": "s",
+            "articles": [{"title": "Good", "link": "https://example.com/good"}],
+        }]},
+    )
+    monkeypatch.setattr(main_mod, "publish_to_slack", lambda *a, **kw: slack_ok)
+    monkeypatch.setattr(main_mod, "save_summary_to_db", lambda s: 1)
+    monkeypatch.setattr(
+        main_mod, "save_summary",
+        (lambda s: None) if dashboard_available else None,
+    )
+    monkeypatch.setattr(main_mod, "run_dashboard", lambda **kw: None)
+
+    main_mod.main()
+
+    with open(tmp_path / "data" / "article_history.json") as f:
+        recorded = json.load(f)["articles"]
+    return recorded, persisted_urls
+
+
 class TestDeliveryGating:
     """main() must commit history/embeddings only after successful delivery."""
 
-    ACCEPTED = {"title": "Good", "link": "https://example.com/good", "summary": "s"}
-    REJECTED = {"title": "Bad", "link": "https://example.com/bad", "summary": "s"}
-
-    def _run_main(self, tmp_path, monkeypatch, slack_ok):
-        import main as main_mod
-
-        monkeypatch.chdir(tmp_path)
-        (tmp_path / ".env").write_text(
-            "OPENAI_API_KEY=test-key\n"
-            "SLACK_WEBHOOK_URL=https://hooks.slack.com/test\n"
-        )
-        monkeypatch.setattr(sys, "argv", ["main.py", "--output", "slack"])
-
-        articles = [self.ACCEPTED, self.REJECTED]
-        pending = [
-            {"url": a["link"], "title": a["title"], "lead_text": "t",
-             "embedding": b"\x00", "embedding_model": "m"}
-            for a in articles
-        ]
-
-        persisted_urls = []
-
-        monkeypatch.setattr(main_mod, "fetch_feeds", lambda urls: list(articles))
-        monkeypatch.setattr(
-            main_mod, "filter_semantic_duplicates",
-            lambda **kw: (list(articles), {
-                "total": 2, "unique": 2, "duplicates": 0,
-                "filtered": [], "pending_embeddings": pending,
-            }),
-        )
-        monkeypatch.setattr(
-            main_mod, "persist_embeddings",
-            lambda entries, db_path=None: persisted_urls.extend(
-                e["url"] for e in entries) or len(entries),
-        )
-        monkeypatch.setattr(
-            main_mod, "filter_stories",
-            lambda *a, **kw: ([self.ACCEPTED], [self.REJECTED], []),
-        )
-        monkeypatch.setattr(
-            main_mod, "group_and_summarize",
-            lambda *a, **kw: {"topics": [{
-                "topic": "T", "summary": "s",
-                "articles": [{"title": "Good", "link": "https://example.com/good"}],
-            }]},
-        )
-        monkeypatch.setattr(main_mod, "publish_to_slack", lambda *a, **kw: slack_ok)
-        monkeypatch.setattr(main_mod, "save_summary_to_db", lambda s: 1)
-
-        main_mod.main()
-
-        with open(tmp_path / "data" / "article_history.json") as f:
-            recorded = json.load(f)["articles"]
-        return recorded, persisted_urls
-
     def test_successful_delivery_commits_everything(self, tmp_path, monkeypatch):
-        recorded, persisted = self._run_main(tmp_path, monkeypatch, slack_ok=True)
+        recorded, persisted = _run_gated_main(
+            tmp_path, monkeypatch, output="slack", slack_ok=True
+        )
         assert "https://example.com/good" in recorded
         assert "https://example.com/bad" in recorded
         assert recorded["https://example.com/bad"]["status"] == "rejected"
@@ -422,7 +486,9 @@ class TestDeliveryGating:
         ]
 
     def test_failed_delivery_retries_accepted_articles(self, tmp_path, monkeypatch):
-        recorded, persisted = self._run_main(tmp_path, monkeypatch, slack_ok=False)
+        recorded, persisted = _run_gated_main(
+            tmp_path, monkeypatch, output="slack", slack_ok=False
+        )
         # Rejected article is still recorded (its fate is decided)...
         assert "https://example.com/bad" in recorded
         assert "https://example.com/bad" in persisted
@@ -430,3 +496,58 @@ class TestDeliveryGating:
         # so the next run retries it.
         assert "https://example.com/good" not in recorded
         assert "https://example.com/good" not in persisted
+
+
+class TestWebDeliveryGating:
+    """For web output, delivery means save_summary succeeded — not that
+    the summary merely printed."""
+
+    def test_web_save_success_commits(self, tmp_path, monkeypatch):
+        recorded, persisted = _run_gated_main(
+            tmp_path, monkeypatch, output="web", dashboard_available=True
+        )
+        assert "https://example.com/good" in recorded
+        assert "https://example.com/good" in persisted
+
+    def test_web_module_missing_does_not_commit(self, tmp_path, monkeypatch):
+        recorded, persisted = _run_gated_main(
+            tmp_path, monkeypatch, output="web", dashboard_available=False
+        )
+        assert "https://example.com/good" not in recorded
+        assert "https://example.com/good" not in persisted
+        # Rejected bookkeeping is independent of delivery
+        assert "https://example.com/bad" in recorded
+
+
+class TestFeedLinkDedup:
+    """fetch_feeds drops exact-link duplicates across feeds."""
+
+    def test_same_link_across_feeds_kept_once(self, tmp_path, monkeypatch):
+        import rss_reader
+
+        class FakeFeed:
+            bozo = False
+            entries = [{
+                "title": "Same Story",
+                "link": "https://example.com/same",
+                "summary": "s",
+                "published": "",
+            }]
+
+        class FakeResponse:
+            status_code = 200
+            text = "<rss/>"
+            headers = {}
+
+        monkeypatch.chdir(tmp_path)  # keep cache.json in tmp
+        monkeypatch.setattr(
+            rss_reader.requests, "get", lambda *a, **kw: FakeResponse()
+        )
+        monkeypatch.setattr(
+            rss_reader.feedparser, "parse", lambda content: FakeFeed()
+        )
+
+        articles = rss_reader.fetch_feeds(
+            ["https://feed-a.example.com/rss", "https://feed-b.example.com/rss"]
+        )
+        assert len(articles) == 1

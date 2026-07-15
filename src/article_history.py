@@ -38,13 +38,16 @@ class ArticleHistory:
         return {"last_cleaned": datetime.now().isoformat(), "articles": {}}
 
     def _save_history(self):
-        """Save article history to file."""
+        """Save article history to file (atomically, so a kill mid-write
+        cannot corrupt the file and silently wipe the whole history)."""
         try:
             # Ensure directory exists
             os.makedirs(os.path.dirname(self.history_file), exist_ok=True)
 
-            with open(self.history_file, "w") as f:
+            tmp_file = self.history_file + ".tmp"
+            with open(tmp_file, "w") as f:
                 json.dump(self.history, f)
+            os.replace(tmp_file, self.history_file)
             logging.info(f"Saved article history with {len(self.history.get('articles', {}))} articles to {self.history_file}")
         except Exception as e:
             logging.error(f"Error saving article history: {e}")

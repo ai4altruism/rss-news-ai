@@ -37,6 +37,11 @@ class LLMUsageMetadata:
 class BaseProvider(ABC):
     """Abstract base class for LLM providers."""
 
+    # (connect, read) timeout for provider HTTP calls. A hung socket must
+    # not stall the whole scheduler; reasoning models can legitimately
+    # take a while, hence the generous read timeout.
+    REQUEST_TIMEOUT = (10, 180)
+
     def __init__(self, model: str, api_key: str):
         """
         Initialize the provider.

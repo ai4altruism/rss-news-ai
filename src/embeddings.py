@@ -387,14 +387,7 @@ def filter_semantic_duplicates(
                 if defer_saves:
                     pending_embeddings.append(entry)
                 else:
-                    save_article_embedding(
-                        url=url,
-                        title=title,
-                        lead_text=embed_text,
-                        embedding=embedding.tobytes(),
-                        embedding_model=model,
-                        db_path=db_path,
-                    )
+                    persist_embeddings([entry], db_path=db_path)
                 # Add to recent list for checking remaining articles
                 recent.append({
                     "url": url,

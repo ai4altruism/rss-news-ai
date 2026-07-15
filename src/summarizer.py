@@ -154,6 +154,16 @@ Here are the articles to group:
     for topic in unified_topics:
         grounded = []
         for stub in topic.get("articles", []):
+            # LLMs occasionally emit bare title strings instead of
+            # {title, link} objects
+            if isinstance(stub, str):
+                stub = {"title": stub}
+            elif not isinstance(stub, dict):
+                logging.warning(
+                    f"Skipping malformed article entry in topic "
+                    f"'{topic.get('topic')}': {stub!r}"
+                )
+                continue
             src = (
                 by_link.get(stub.get("link"))
                 or by_title.get(stub.get("title"))
@@ -189,13 +199,16 @@ Here are the articles to group:
     # ----------------------
     # SUMMARIZATION PHASE
     # ----------------------
-    output_topics = []
     for topic, relevant_articles in grounded_topics:
         # Output articles come straight from source data
         topic["articles"] = [
             {"title": a.get("title", "Untitled"), "link": a.get("link", "#")}
             for a in relevant_articles
         ]
+
+        fallback_summary = (
+            f"A collection of {len(relevant_articles)} articles about {topic.get('topic')}."
+        )
 
         # Build a combined prompt text from up to 5 articles
         combined_text = "\n\n".join([
@@ -204,8 +217,7 @@ Here are the articles to group:
         ])
 
         if not combined_text.strip():
-            topic["summary"] = f"A collection of {len(relevant_articles)} articles about {topic.get('topic')}."
-            output_topics.append(topic)
+            topic["summary"] = fallback_summary
             continue
 
         summarize_prompt = f"""
@@ -229,14 +241,10 @@ RESPONSE FORMAT: Just one short paragraph.
 
             # Basic cleanup
             summary_text = re.sub(r'\s+', ' ', summary_text).strip()
-            if not summary_text:
-                summary_text = f"A collection of {len(relevant_articles)} articles about {topic.get('topic')}."
-            topic["summary"] = summary_text
+            topic["summary"] = summary_text or fallback_summary
 
         except Exception as e:
             logging.error(f"LLM summarization error for topic '{topic.get('topic')}': {e}")
-            topic["summary"] = f"A collection of {len(relevant_articles)} articles about {topic.get('topic')}."
+            topic["summary"] = fallback_summary
 
-        output_topics.append(topic)
-
-    return {"topics": output_topics}
+    return {"topics": [topic for topic, _ in grounded_topics]}

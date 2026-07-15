@@ -87,7 +87,7 @@ class GeminiProvider(BaseProvider):
                 "parts": [{"text": instructions}]
             }
 
-        resp = requests.post(url, headers=headers, json=data, timeout=(10, 180))
+        resp = requests.post(url, headers=headers, json=data, timeout=self.REQUEST_TIMEOUT)
 
         # Calculate response time
         response_time_ms = int((time.time() - start_time) * 1000)

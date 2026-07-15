@@ -36,10 +36,11 @@ Sprint 14 eliminates a family of silent article-loss failure modes found during 
 | File | Change |
 |------|--------|
 | `src/json_utils.py` | New: shared safe JSON sanitization/validation |
-| `src/llm_filter.py` | Accepted/rejected/errored triage; strict decision matching |
-| `src/summarizer.py` | Grounding phase; catch-all topic; shared JSON recovery |
+| `src/llm_filter.py` | Accepted/rejected/errored triage; word-boundary decision matching; string-index coercion |
+| `src/summarizer.py` | Grounding phase; catch-all topic; shared JSON recovery; string-stub tolerance |
 | `src/embeddings.py` | `exclude_url`, `defer_saves`, `persist_embeddings()` |
-| `src/article_history.py` | `status="rejected"` tracking |
+| `src/rss_reader.py` | Exact-link dedup across feeds (an aggregator carrying a publisher's URL) |
+| `src/article_history.py` | `status="rejected"` tracking; atomic history writes |
 | `src/main.py` | Delivery-gated bookkeeping; env plumbing for dedup tunables; `debug=False` |
 | `src/providers/*.py` | HTTP timeouts |
 | `src/slack_publisher.py` | HTTP timeout |
@@ -56,10 +57,12 @@ Sprint 14 eliminates a family of silent article-loss failure modes found during 
 
 ## Test Results
 
-345 tests passing (321 existing + 24 new), no regressions.
+351 tests passing (321 existing + 30 new), no regressions.
 
 ## Operational Notes
 
 - Existing `article_history.json` and `history.db` formats are unchanged; rejected tracking adds an optional `status` key to new entries only.
 - After deployment, expect the hourly "unique articles after filtering previously published ones" count to drop sharply over the first day: rejected articles are now URL-tracked instead of being re-embedded and re-suppressed every cycle (~700/hour previously).
 - A new "Additional stories" topic may occasionally appear in Slack: those are articles the grouping model omitted, which were previously lost silently.
+- Keep `DEDUP_LOOKBACK_DAYS` ≤ `HISTORY_RETENTION_DAYS` (defaults 7 and 30 are fine). Because similarity matching now excludes an article's own URL, an article that ages out of URL history while its embedding is still within the lookback window would no longer be suppressed by its own embedding.
+- The scheduler's per-run timeout is `max(interval, 30 min)` and is disabled for `--output web` (which blocks in the dashboard server by design).

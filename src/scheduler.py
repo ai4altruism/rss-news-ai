@@ -58,15 +58,18 @@ def run_scheduler(
             if ignore_history:
                 cmd.append("--ignore-history")
 
-            # A single run must never outlive its interval — provider calls
-            # have timeouts, but this is the backstop against a hung run
-            # stalling the scheduler forever.
-            subprocess.run(cmd, check=True, timeout=interval * 60)
+            # Backstop against a hung run stalling the scheduler forever.
+            # Floored at 30 minutes so a short interval cannot kill
+            # legitimately long runs (a big backlog with slow provider
+            # calls can exceed a small interval). No timeout for web
+            # output: main() blocks in the dashboard server by design.
+            run_timeout = None if output == "web" else max(interval * 60, 1800)
+            subprocess.run(cmd, check=True, timeout=run_timeout)
             logger.info(f"RSS Feed Monitor run completed successfully")
         except subprocess.TimeoutExpired:
             logger.error(
-                f"RSS Feed Monitor run exceeded {interval} minutes and was killed; "
-                f"unmarked articles will be retried next run"
+                f"RSS Feed Monitor run exceeded {run_timeout // 60} minutes and was "
+                f"killed; unmarked articles will be retried next run"
             )
         except subprocess.CalledProcessError as e:
             logger.error(f"Error running RSS Feed Monitor: {e}")

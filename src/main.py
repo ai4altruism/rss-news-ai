@@ -81,8 +81,14 @@ def parse_arguments():
 def main():
     args = parse_arguments()
 
-    # Load environment variables manually to properly handle multi-line values
-    env_vars = dotenv_values(".env")
+    # Load environment variables manually to properly handle multi-line values.
+    # .env file values take precedence; the process environment (e.g. docker
+    # run --env-file, which sets env vars but creates no file) is the
+    # fallback so both deployment styles work.
+    env_vars = {
+        **os.environ,
+        **{k: v for k, v in dotenv_values(".env").items() if v is not None},
+    }
     openai_api_key = env_vars.get("OPENAI_API_KEY")
 
     # Setup logger
@@ -127,6 +133,19 @@ def main():
         run_dashboard(port=web_port, debug=False)
         return
 
+    def emit_empty_summary(message):
+        """Emit an empty summary for outputs that expect one. For web
+        output, still serve the dashboard so the container does not exit
+        just because one cycle produced nothing."""
+        empty_summary = {"topics": [], "message": message}
+        if args.output == "web" and save_summary:
+            save_summary(empty_summary)
+        if args.output == "console":
+            print(json.dumps(empty_summary, indent=4))
+        if args.output == "web" and run_dashboard:
+            logger.info(f"Starting web dashboard server on port {web_port}...")
+            run_dashboard(port=web_port, debug=False, use_reloader=False)
+
     # Initialize article history
     article_history = ArticleHistory(retention_days=history_retention_days)
 
@@ -145,19 +164,7 @@ def main():
         # If no new articles, exit early with appropriate messaging
         if not unique_articles:
             logger.info("No new articles to process.")
-            # Create an empty summary for outputs that expect one
-            empty_summary = {
-                "topics": [],
-                "message": "No new articles found since last update.",
-            }
-
-            # Handle outputs that need a summary even when empty
-            if args.output == "web" and save_summary:
-                save_summary(empty_summary)
-
-            if args.output == "console":
-                print(json.dumps(empty_summary, indent=4))
-
+            emit_empty_summary("No new articles found since last update.")
             return
     else:
         logger.info("Article history check skipped (--ignore-history flag used).")
@@ -179,13 +186,24 @@ def main():
     if semantic_dedup_enabled and unique_articles:
         logger.info("Running semantic deduplication...")
         try:
+            # Tunables pass through as None when unset so embeddings.py's
+            # DEFAULT_* constants remain the single source of truth
             unique_articles, dedup_stats = filter_semantic_duplicates(
                 articles=unique_articles,
                 api_key=openai_api_key,
-                similarity_threshold=float(env_vars.get("SIMILARITY_THRESHOLD", 0.85)),
-                lookback_days=int(env_vars.get("DEDUP_LOOKBACK_DAYS", 7)),
-                embedding_model=env_vars.get("EMBEDDING_MODEL", "text-embedding-3-small"),
-                retention_days=int(env_vars.get("EMBEDDING_RETENTION_DAYS", 30)),
+                similarity_threshold=(
+                    float(env_vars["SIMILARITY_THRESHOLD"])
+                    if env_vars.get("SIMILARITY_THRESHOLD") else None
+                ),
+                lookback_days=(
+                    int(env_vars["DEDUP_LOOKBACK_DAYS"])
+                    if env_vars.get("DEDUP_LOOKBACK_DAYS") else None
+                ),
+                embedding_model=env_vars.get("EMBEDDING_MODEL") or None,
+                retention_days=(
+                    int(env_vars["EMBEDDING_RETENTION_DAYS"])
+                    if env_vars.get("EMBEDDING_RETENTION_DAYS") else None
+                ),
                 defer_saves=True,
             )
             pending_embeddings = dedup_stats.get("pending_embeddings", [])
@@ -216,14 +234,7 @@ def main():
     # If no articles remain after deduplication, exit early
     if not unique_articles:
         logger.info("No unique articles to process after deduplication.")
-        empty_summary = {
-            "topics": [],
-            "message": "No unique articles found after deduplication.",
-        }
-        if args.output == "web" and save_summary:
-            save_summary(empty_summary)
-        if args.output == "console":
-            print(json.dumps(empty_summary, indent=4))
+        emit_empty_summary("No unique articles found after deduplication.")
         return
 
     # Filter articles using LLM
@@ -249,14 +260,7 @@ def main():
     # If no articles remain after filtering, exit early without sending reports
     if not filtered_articles:
         logger.info("No articles passed the LLM filter.")
-        empty_summary = {
-            "topics": [],
-            "message": "No relevant articles found since last update.",
-        }
-        if args.output == "web" and save_summary:
-            save_summary(empty_summary)
-        if args.output == "console":
-            print(json.dumps(empty_summary, indent=4))
+        emit_empty_summary("No relevant articles found since last update.")
         return
 
     # Group and summarize
@@ -271,17 +275,24 @@ def main():
     # instead of being silently lost.
     delivered = False
 
-    if args.output == "console" or args.output == "web":
+    if args.output == "console":
         # Output the structured JSON summary to console
         output_json = json.dumps(summary, indent=4)
         logger.info("Summary generated:")
         print(output_json)
         delivered = True
 
-        # Save for web dashboard if requested
-        if args.output == "web" and save_summary:
+    elif args.output == "web":
+        # Delivery for web output means the summary was saved for the
+        # dashboard, not merely printed
+        if save_summary:
             save_summary(summary)
             logger.info("Summary saved for web dashboard.")
+            delivered = True
+        else:
+            logger.error(
+                "Web dashboard module not available; articles will be retried next run."
+            )
 
     elif args.output == "slack":
         if not summary.get("topics") or len(summary.get("topics")) == 0:
