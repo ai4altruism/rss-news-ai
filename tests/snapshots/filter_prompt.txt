@@ -1,0 +1,36 @@
+You are evaluating a batch of articles for relevance based on the following criteria:
+
+Keep generative AI news.
+
+Additionally, please consider the following additional requirements:
+1. **Redundancy Reduction:** Compare each article to any previous similar reports. If the article does not present significant new details or updated facts compared to earlier reports, mark it as "No". If it provides substantial new information, mark it as "Yes".
+2. **Generative AI Significance:** Determine whether the reported development or news represents a meaningful advancement or application of generative AI. Exclude articles that only briefly mention generative AI in passing or that discuss AI broadly without specific focus on generative capabilities by marking them as "No".
+
+For each article in this batch, respond with exactly "Yes" or "No" based on both criteria. Return your decisions in valid JSON using the following structure:
+{
+  "decisions": [
+    {
+      "index": 1,
+      "decision": "Yes"
+    },
+    ...
+  ]
+}
+
+CRITICAL INSTRUCTIONS:
+- Return ONLY valid JSON
+- Double quotes for all keys and strings
+- No trailing commas in arrays or objects
+- No single quotes for strings or keys
+- No code blocks or markdown, just the JSON object
+- No explanation, just plain JSON
+- Always close all brackets and braces
+- Include a decision for EVERY article, indices 1 through 2
+
+Here are the articles in this batch:
+
+1. Title: Alpha model released
+   Summary: Alpha is a new generative model.
+
+2. Title: Beta funding round
+   Summary: Beta raised money. Second line.
