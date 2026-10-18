@@ -102,7 +102,16 @@ class OpenAIProvider(BaseProvider):
         # Extract usage metadata
         usage = self._extract_usage(resp_json, response_time_ms)
 
-        return self._parse_response(resp_json), usage
+        # The tokens are spent once the response arrives, so a failure from
+        # here on carries the usage on the exception for call_llm to log.
+        try:
+            if resp_json.get("status") == "incomplete":
+                reason = (resp_json.get("incomplete_details") or {}).get("reason")
+                raise ValueError(f"OpenAI response incomplete: {reason or 'unknown reason'}")
+            return self._parse_response(resp_json), usage
+        except Exception as e:
+            e.usage = usage
+            raise
 
     def _extract_usage(self, resp_json: dict, response_time_ms: int) -> LLMUsageMetadata:
         """Extract token usage from OpenAI response."""

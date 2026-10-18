@@ -10,6 +10,44 @@ import math
 MAX_BLOCKS_PER_MESSAGE = 45  # Slack limit is 50, leave buffer
 MAX_ARTICLES_PER_TOPIC = 10  # Limit number of articles displayed per topic
 MAX_TOPICS_PER_MESSAGE = 5   # Limit number of topics per message
+MAX_SECTION_TEXT = 3000      # Slack rejects a section whose text exceeds 3000 chars
+
+
+def escape_slack(text):
+    """Escape the three characters Slack treats as control characters in
+    mrkdwn, so model- or feed-supplied text cannot ping the channel
+    (<!channel>) or forge links."""
+    return str(text).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+
+def split_text(text, limit=MAX_SECTION_TEXT):
+    """Split text into chunks of at most `limit` chars, breaking between
+    whole lines where possible, else at whitespace, else mid-word."""
+    chunks = []
+    current = ""
+    for line in text.split("\n"):
+        while len(line) > limit:
+            cut = line.rfind(" ", 0, limit + 1)
+            if cut <= 0:
+                cut = limit
+            head, line = line[:cut], line[cut:].lstrip(" ")
+            if current:
+                chunks.append(current)
+                current = ""
+            chunks.append(head)
+        if current and len(current) + 1 + len(line) > limit:
+            chunks.append(current)
+            current = line
+        else:
+            current = f"{current}\n{line}" if current else line
+    if current:
+        chunks.append(current)
+    return chunks or [""]
+
+
+def section(text):
+    return {"type": "section", "text": {"type": "mrkdwn", "text": text}}
+
 
 def format_for_slack(summary_data, start_topic=0, end_topic=None):
     """
@@ -70,22 +108,11 @@ def format_for_slack(summary_data, start_topic=0, end_topic=None):
         articles = topic_group.get("articles", [])
         
         # Add topic header
-        blocks.append({
-            "type": "section",
-            "text": {
-                "type": "mrkdwn",
-                "text": f"*{topic_name}*"
-            }
-        })
+        blocks.append(section(split_text(f"*{escape_slack(topic_name)}*")[0]))
         
-        # Add summary
-        blocks.append({
-            "type": "section",
-            "text": {
-                "type": "mrkdwn",
-                "text": summary
-            }
-        })
+        # Add summary (split if it would exceed Slack's per-section cap)
+        for chunk in split_text(escape_slack(summary)):
+            blocks.append(section(chunk))
         
         # Add article links (limited)
         if articles:
@@ -93,27 +120,27 @@ def format_for_slack(summary_data, start_topic=0, end_topic=None):
             display_articles = articles[:MAX_ARTICLES_PER_TOPIC]
             total_articles = len(articles)
             
-            link_text = "*Articles:*\n"
+            lines = ["*Articles:*"]
             for idx, article in enumerate(display_articles, 1):
                 title = article.get("title", "Untitled")
                 link = article.get("link", "#")
                 # Truncate long titles
                 if len(title) > 80:
                     title = title[:77] + "..."
-                link_text += f"{idx}. <{link}|{title}>\n"
+                line = f"{idx}. <{escape_slack(link)}|{escape_slack(title)}>"
+                if len(line) > MAX_SECTION_TEXT:
+                    # Absurdly long link: keep the title, drop the link
+                    line = f"{idx}. {escape_slack(title)}"
+                lines.append(line)
             
             # Add note if some articles were omitted
             if total_articles > MAX_ARTICLES_PER_TOPIC:
                 omitted = total_articles - MAX_ARTICLES_PER_TOPIC
-                link_text += f"_(+{omitted} more articles not shown)_\n"
+                lines.append(f"_(+{omitted} more articles not shown)_")
             
-            blocks.append({
-                "type": "section",
-                "text": {
-                    "type": "mrkdwn",
-                    "text": link_text
-                }
-            })
+            # Split between whole lines so no section exceeds the cap
+            for chunk in split_text("\n".join(lines) + "\n"):
+                blocks.append(section(chunk))
         
         blocks.append({
             "type": "divider"
@@ -121,7 +148,7 @@ def format_for_slack(summary_data, start_topic=0, end_topic=None):
     
     return blocks
 
-def publish_to_slack(summary_data, webhook_url):
+def publish_to_slack(summary_data, webhook_url, delivered_links=None):
     """
     Publish the summary data to a Slack channel using a webhook.
     Handles large datasets by splitting into multiple messages if needed.
@@ -129,9 +156,13 @@ def publish_to_slack(summary_data, webhook_url):
     Parameters:
         summary_data (dict): The grouped and summarized articles.
         webhook_url (str): The Slack webhook URL.
+        delivered_links (set, optional): Filled in as pages are sent with
+            the link of every article on a page Slack accepted. After a
+            partial failure it names exactly what was delivered, so the
+            caller can record those and not repost them next run.
         
     Returns:
-        bool: Whether the message was sent successfully.
+        bool: Whether every message was sent successfully.
     """
     topics = summary_data.get("topics", [])
     total_topics = len(topics)
@@ -142,10 +173,19 @@ def publish_to_slack(summary_data, webhook_url):
     
     success = True
     
+    def record_delivered(page_topics):
+        if delivered_links is not None:
+            for t in page_topics:
+                for article in t.get("articles", []):
+                    if article.get("link"):
+                        delivered_links.add(article["link"])
+    
     # If few topics, send as single message
     if total_topics <= MAX_TOPICS_PER_MESSAGE:
         blocks = format_for_slack(summary_data)
         success = send_slack_message(webhook_url, blocks)
+        if success:
+            record_delivered(topics)
     else:
         # Split into multiple messages
         for start_idx in range(0, total_topics, MAX_TOPICS_PER_MESSAGE):
@@ -154,7 +194,9 @@ def publish_to_slack(summary_data, webhook_url):
             
             # Send this batch
             batch_success = send_slack_message(webhook_url, blocks)
-            if not batch_success:
+            if batch_success:
+                record_delivered(topics[start_idx:end_idx])
+            else:
                 success = False
     
     return success

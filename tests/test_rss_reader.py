@@ -17,7 +17,6 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 import rss_reader
 from embeddings import get_embedding_text
 from llm_filter import filter_stories
-from tests.fakes import known_bug
 
 FEED_URL = "https://feeds.example.invalid/rss"
 
@@ -113,7 +112,6 @@ class TestFeedParserEdgeCases:
         parsed = feedparser.parse(self.MALFORMED_BUT_USABLE)
         assert parsed.bozo and len(parsed.entries) == 1
 
-    @known_bug("feedparser bozo flag drops a whole feed even when entries were parsed")
     def test_bozo_feed_with_parsed_entries_is_not_dropped(self):
         articles, _ = fetch([http(self.MALFORMED_BUT_USABLE)])
         assert [a["title"] for a in articles] == ["Salvageable"]
@@ -127,20 +125,17 @@ class TestHtmlSummaries:
         articles, _ = fetch([http(self.HTML_FEED)])
         return articles[0]
 
-    def test_html_reaches_us_as_markup_today(self):
-        assert self._article()["summary"] == "<p>Hello <b>world</b></p>"
+    def test_tags_and_entities_are_stripped_at_read_time(self):
+        assert self._article()["summary"] == "Hello world"
 
-    @known_bug("HTML summaries are kept as raw markup in the article dict")
     def test_fetched_summary_is_plain_text(self):
         assert self._article()["summary"] == "Hello world"
 
-    @known_bug("raw HTML tags reach the filter prompt")
     def test_filter_prompt_has_no_html_tags(self):
         article = self._article()
         with patch("llm_filter.call_llm", return_value='{"decisions": []}') as llm:
             filter_stories([article], "p", "gpt-4o-mini", "k")
         assert "<p>" not in llm.call_args.kwargs["prompt"]
 
-    @known_bug("raw HTML tags reach the embedding text")
     def test_embedding_text_has_no_html_tags(self):
         assert "<" not in get_embedding_text(self._article())

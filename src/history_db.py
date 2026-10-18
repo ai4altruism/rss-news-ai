@@ -97,6 +97,16 @@ CREATE TABLE IF NOT EXISTS article_embeddings (
 -- Indexes for efficient embedding queries
 CREATE INDEX IF NOT EXISTS idx_embeddings_created ON article_embeddings(created_at);
 CREATE INDEX IF NOT EXISTS idx_embeddings_url ON article_embeddings(url);
+
+-- Articles dropped as semantic duplicates, so they stay suppressed after
+-- the original leaves the similarity lookback window
+CREATE TABLE IF NOT EXISTS suppressed_duplicates (
+    url TEXT PRIMARY KEY,
+    title TEXT,
+    similar_to_url TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_suppressed_created ON suppressed_duplicates(created_at);
 """
 
 
@@ -1529,6 +1539,78 @@ def get_embedding_count(db_path: Optional[str] = None) -> int:
         return 0
 
 
+def _ensure_suppressed_table(conn) -> None:
+    """Create suppressed_duplicates on databases that predate it."""
+    conn.execute(
+        """CREATE TABLE IF NOT EXISTS suppressed_duplicates (
+               url TEXT PRIMARY KEY,
+               title TEXT,
+               similar_to_url TEXT,
+               created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+           )"""
+    )
+
+
+def save_suppressed_duplicates(
+    entries: List[Dict[str, Any]],
+    db_path: Optional[str] = None
+) -> int:
+    """
+    Record articles dropped as semantic duplicates.
+
+    Parameters:
+        entries: Dicts with url, title and similar_url.
+        db_path: Path to database file.
+
+    Returns:
+        Number of entries recorded.
+    """
+    if not entries:
+        return 0
+    try:
+        with get_db_connection(db_path) as conn:
+            _ensure_suppressed_table(conn)
+            conn.executemany(
+                """INSERT OR REPLACE INTO suppressed_duplicates
+                   (url, title, similar_to_url) VALUES (?, ?, ?)""",
+                [(e["url"], e.get("title", ""), e.get("similar_url", "")) for e in entries]
+            )
+            conn.commit()
+            return len(entries)
+
+    except Exception as e:
+        logging.error(f"Failed to save suppressed duplicates: {e}")
+        return 0
+
+
+def get_suppressed_urls(
+    days: int = 30,
+    db_path: Optional[str] = None
+) -> set:
+    """
+    URLs recorded as semantic duplicates within the last N days.
+
+    Parameters:
+        days: Days to look back (match the embedding retention).
+        db_path: Path to database file.
+
+    Returns:
+        Set of URLs; empty if the table or database does not exist yet.
+    """
+    try:
+        with get_db_connection(db_path, readonly=True) as conn:
+            cursor = conn.execute(
+                """SELECT url FROM suppressed_duplicates
+                   WHERE created_at >= datetime('now', ?)""",
+                (f"-{days} days",)
+            )
+            return {row["url"] for row in cursor.fetchall()}
+
+    except Exception as e:
+        logging.debug(f"No suppressed duplicates loaded: {e}")
+        return set()
+
+
 def cleanup_old_embeddings(
     days: int = 30,
     db_path: Optional[str] = None
@@ -1550,8 +1632,14 @@ def cleanup_old_embeddings(
                    WHERE created_at < datetime('now', ?)""",
                 (f"-{days} days",)
             )
-            conn.commit()
             deleted = cursor.rowcount
+            _ensure_suppressed_table(conn)
+            conn.execute(
+                """DELETE FROM suppressed_duplicates
+                   WHERE created_at < datetime('now', ?)""",
+                (f"-{days} days",)
+            )
+            conn.commit()
             if deleted > 0:
                 logging.info(f"Cleaned up {deleted} old embeddings")
             return deleted

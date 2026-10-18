@@ -3,7 +3,7 @@
 import logging
 import json
 import re
-from utils import call_llm
+from utils import call_llm, build_api_keys
 from json_utils import validate_json
 
 def unify_topics(topics_list):
@@ -13,14 +13,24 @@ def unify_topics(topics_list):
     """
     unified = {}
     for topic_dict in topics_list:
-        topic_name = topic_dict.get("topic", "Untitled").strip()
+        # The LLM's JSON is untrusted: skip entries that are not objects
+        # and tolerate null/non-string names and non-list article fields
+        if not isinstance(topic_dict, dict):
+            logging.warning(f"Skipping malformed topic entry: {topic_dict!r}")
+            continue
+        raw_name = topic_dict.get("topic")
+        topic_name = str(raw_name).strip() if raw_name is not None else ""
+        topic_name = topic_name or "Untitled"
         if topic_name not in unified:
             unified[topic_name] = {
                 "topic": topic_name,
                 "articles": []
             }
         # Combine articles
-        for article in topic_dict.get("articles", []):
+        articles = topic_dict.get("articles")
+        if not isinstance(articles, list):
+            articles = []
+        for article in articles:
             if article not in unified[topic_name]["articles"]:
                 unified[topic_name]["articles"].append(article)
     return list(unified.values())
@@ -102,7 +112,7 @@ Here are the articles to group:
             group_raw_output = call_llm(
                 model_config=group_model,
                 prompt=group_prompt,
-                api_keys={"openai": openai_api_key},
+                api_keys=build_api_keys(group_model, openai_api_key),
                 instructions="You are a JSON formatting expert who organizes articles into topics about generative AI.",
                 max_tokens=4000,
                 temperature=0.0,
@@ -111,7 +121,12 @@ Here are the articles to group:
 
             is_valid, result = validate_json(group_raw_output)
             if is_valid:
-                all_topics.extend(result.get("topics", []))
+                topics = result.get("topics") if isinstance(result, dict) else None
+                if isinstance(topics, dict):
+                    topics = [topics]  # a single topic object, not a list
+                if not isinstance(topics, list):
+                    topics = []
+                all_topics.extend(topics)
             else:
                 logging.error(f"JSON validation failed on chunk {chunk_index + 1}: {result}")
                 fallback = {
@@ -164,15 +179,20 @@ Here are the articles to group:
                     f"'{topic.get('topic')}': {stub!r}"
                 )
                 continue
+            link, title = stub.get("link"), stub.get("title")
+            if not isinstance(link, str):
+                link = None
+            if not isinstance(title, str):
+                title = None
             src = (
-                by_link.get(stub.get("link"))
-                or by_title.get(stub.get("title"))
-                or by_norm_title.get(_normalize_title(stub.get("title")))
+                by_link.get(link)
+                or by_title.get(title)
+                or by_norm_title.get(_normalize_title(title))
             )
             if src is None:
                 logging.warning(
                     f"Dropping ungroundable article from topic '{topic.get('topic')}': "
-                    f"{stub.get('title')!r}"
+                    f"{title!r}"
                 )
                 continue
             if id(src) in placed_ids:
@@ -232,7 +252,7 @@ RESPONSE FORMAT: Just one short paragraph.
             summary_text = call_llm(
                 model_config=summarize_model,
                 prompt=summarize_prompt,
-                api_keys={"openai": openai_api_key},
+                api_keys=build_api_keys(summarize_model, openai_api_key),
                 instructions="You create brief, informative summaries of generative AI news articles in a single paragraph.",
                 max_tokens=250,
                 temperature=0.5,

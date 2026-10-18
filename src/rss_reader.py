@@ -6,7 +6,9 @@ import requests
 import json
 import os
 import logging
+import re
 import time
+from html.parser import HTMLParser
 
 CACHE_FILE = os.path.join("data", "cache.json")
 
@@ -14,6 +16,48 @@ CACHE_FILE = os.path.join("data", "cache.json")
 # (e.g. a blog feed serving every post back to 2020) flooding the
 # pipeline with stale articles. Set MAX_ARTICLE_AGE_DAYS=0 to disable.
 DEFAULT_MAX_ARTICLE_AGE_DAYS = 30
+
+class _TextExtractor(HTMLParser):
+    """Collects the text of an HTML fragment, skipping script/style bodies."""
+
+    BLOCK_TAGS = {"p", "br", "div", "li", "ul", "ol", "tr", "h1", "h2", "h3", "h4", "h5", "h6"}
+
+    def __init__(self):
+        super().__init__(convert_charrefs=True)  # decodes &amp; &#8217; etc.
+        self.parts = []
+        self._skip = 0
+
+    def handle_starttag(self, tag, attrs):
+        if tag in ("script", "style"):
+            self._skip += 1
+        elif tag in self.BLOCK_TAGS:
+            self.parts.append(" ")
+
+    def handle_endtag(self, tag):
+        if tag in ("script", "style") and self._skip:
+            self._skip -= 1
+        elif tag in self.BLOCK_TAGS:
+            self.parts.append(" ")
+
+    def handle_data(self, data):
+        if not self._skip:
+            self.parts.append(data)
+
+
+def strip_html(text):
+    """Reduce an RSS summary to plain text: tags removed, entities decoded,
+    whitespace collapsed. Feeds often carry HTML here, which would otherwise
+    reach the filter prompt and the embedding text as markup."""
+    if not text:
+        return ""
+    extractor = _TextExtractor()
+    try:
+        extractor.feed(text)
+        extractor.close()
+    except Exception:
+        return re.sub(r"\s+", " ", re.sub(r"<[^>]*>", " ", text)).strip()
+    return re.sub(r"\s+", " ", "".join(extractor.parts)).strip()
+
 
 def load_cache():
     """Load cache from file."""
@@ -85,8 +129,15 @@ def fetch_feeds(rss_feed_urls, max_age_days=None):
 
             parsed_feed = feedparser.parse(feed_content)
             if parsed_feed.bozo:
-                logging.warning(f"Error parsing feed: {url}. Error: {parsed_feed.bozo_exception}")
-                continue
+                # bozo flags any well-formedness problem, including ones
+                # feedparser recovered from; keep whatever it parsed
+                if not parsed_feed.entries:
+                    logging.warning(f"Error parsing feed: {url}. Error: {parsed_feed.bozo_exception}")
+                    continue
+                logging.warning(
+                    f"Feed {url} is malformed ({parsed_feed.bozo_exception}); "
+                    f"keeping {len(parsed_feed.entries)} parsed entries"
+                )
 
             for entry in parsed_feed.entries:
                 # Age guard: feedparser normalizes *_parsed to UTC
@@ -101,7 +152,7 @@ def fetch_feeds(rss_feed_urls, max_age_days=None):
                 articles.append({
                     "title": entry.get("title", ""),
                     "link": entry.get("link", ""),
-                    "summary": entry.get("summary", ""),
+                    "summary": strip_html(entry.get("summary", "")),
                     "published": entry.get("published", ""),
                 })
 

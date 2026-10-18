@@ -19,7 +19,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 
 from embeddings import filter_semantic_duplicates
 from history_db import init_database, get_recent_embeddings
-from tests.fakes import known_bug
+
 
 VEC_X = np.array([1.0, 0.0, 0.0, 0.0], dtype=np.float32)
 VEC_X_NEAR = np.array([0.99, 0.05, 0.0, 0.0], dtype=np.float32)
@@ -101,7 +101,6 @@ class TestDedupWithinWindow:
 
 class TestDedupLifecycleBugs:
 
-    @known_bug("a duplicate dropped on day 0 is never recorded, so it returns once its original leaves the 7-day window")
     def test_duplicate_dropped_on_day_zero_is_still_suppressed_on_day_eight(self, db):
         run(db, [art("A"), art("B")], [VEC_X, VEC_X_NEAR])   # day 0: B dropped as dup of A
         age_all_rows(db, 8)                                   # day 8: A is outside lookback
@@ -110,7 +109,6 @@ class TestDedupLifecycleBugs:
 
         assert unique == []
 
-    @known_bug("a stored embedding of a different dimension makes np.dot raise instead of being skipped")
     def test_stored_embedding_with_other_dimension_is_skipped(self, db):
         old_model_vec = np.array([1.0, 0.0], dtype=np.float32)
         run(db, [art("OLD")], [old_model_vec])

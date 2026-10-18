@@ -3,7 +3,7 @@
 import logging
 import json
 import re
-from utils import call_llm
+from utils import call_llm, build_api_keys
 from json_utils import validate_json
 
 def filter_stories(articles, filter_prompt, filter_model, openai_api_key, batch_size=5):
@@ -102,7 +102,7 @@ Here are the articles in this batch:
             output_text = call_llm(
                 model_config=filter_model,
                 prompt=prompt,
-                api_keys={"openai": openai_api_key},
+                api_keys=build_api_keys(filter_model, openai_api_key),
                 instructions="Output only valid JSON. No extra commentary.",
                 max_tokens=1024,
                 temperature=0.0,
@@ -147,15 +147,35 @@ Here are the articles in this batch:
         # Sort articles by decision; anything the LLM omitted or answered
         # ambiguously counts as errored so it retries next run.
         decisions_by_index = {}
+        conflicted = set()
+        saw_zero_index = False
         for dec in parsed.get("decisions", []):
             idx = dec.get("index")
             # LLMs sometimes emit indices as JSON strings
             if isinstance(idx, str) and idx.strip().isdigit():
                 idx = int(idx.strip())
+            if idx == 0 and isinstance(idx, int):
+                saw_zero_index = True
             if isinstance(idx, int) and 1 <= idx <= len(batch):
-                decisions_by_index[idx] = (
-                    str(dec.get("decision", "")).strip().strip('."\'').lower()
-                )
+                decision = str(dec.get("decision", "")).strip().strip('."\'').lower()
+                # Two different answers for one article: neither can be trusted
+                if idx in decisions_by_index and decisions_by_index[idx] != decision:
+                    conflicted.add(idx)
+                decisions_by_index[idx] = decision
+
+        # An index 0 means the model answered 0-based, so every decision
+        # would land on the previous article. Error the whole batch rather
+        # than mislabel it.
+        if saw_zero_index:
+            logging.error(
+                f"Filter response for chunk {chunk_index} used 0-based indices; "
+                f"articles will be retried next run."
+            )
+            errored.extend(batch)
+            continue
+
+        for idx in conflicted:
+            decisions_by_index.pop(idx, None)
 
         for idx, article in enumerate(batch, start=1):
             decision = decisions_by_index.get(idx)

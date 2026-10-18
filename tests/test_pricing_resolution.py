@@ -16,7 +16,7 @@ import pytest
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 
 from pricing import PRICING, calculate_cost, get_model_pricing
-from tests.fakes import known_bug
+
 
 OPENAI = PRICING["openai"]
 
@@ -61,14 +61,12 @@ class TestResolutionThatWorks:
 
 class TestPrefixFallbackWrongFamily:
 
-    @known_bug("'gpt-4.1-mini' prefix-matches gpt-4 and is billed $30/$60")
     @pytest.mark.parametrize("model", ["gpt-4.1-mini", "gpt-4.1"])
     def test_gpt41_never_priced_as_gpt4(self, model):
         got = get_model_pricing("openai", model)
 
         assert got is None or got == OPENAI.get(model)
 
-    @known_bug("'gpt-5.5-mini' prefix-matches gpt-5 and is billed as the full model")
     def test_gpt55_mini_never_priced_as_gpt5(self):
         got = get_model_pricing("openai", "gpt-5.5-mini")
 

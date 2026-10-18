@@ -15,7 +15,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 
 from providers import OpenAIProvider
 from utils import call_llm
-from tests.fakes import fake_response, known_bug
+from tests.fakes import fake_response
 
 MESSAGE_OK = {
     "status": "completed",
@@ -122,7 +122,6 @@ class TestResponseHandling:
             with pytest.raises(ValueError):
                 OpenAIProvider(model="gpt-5-mini", api_key="k").complete("hi")
 
-    @known_bug('status:"incomplete" with partial text is returned as a complete answer')
     def test_incomplete_status_is_not_accepted_as_complete(self):
         payload = dict(MESSAGE_OK, status="incomplete",
                        incomplete_details={"reason": "max_output_tokens"})
@@ -146,7 +145,6 @@ class TestUsageLoggingThroughCallLlm:
         assert kwargs["task_type"] == "filter"
         assert kwargs["provider"] == "openai"
 
-    @known_bug("tokens spent on a call that returns HTTP 200 but unparseable output are never logged")
     @patch("utils.save_llm_usage")
     def test_usage_logged_when_provider_raises_after_http_200(self, mock_save):
         payload = {"status": "completed",
