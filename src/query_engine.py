@@ -292,7 +292,7 @@ class QueryEngine:
         env_vars = dotenv_values(".env")
 
         self.api_key = openai_api_key or os.environ.get("OPENAI_API_KEY") or env_vars.get("OPENAI_API_KEY")
-        self.model = model or os.environ.get("QUERY_MODEL") or env_vars.get("QUERY_MODEL", "gpt-4o-mini")
+        self.model = model or os.environ.get("QUERY_MODEL") or env_vars.get("QUERY_MODEL", "gpt-5-mini")
         self.db_path = db_path or get_db_path()
 
         if not self.api_key:

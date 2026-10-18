@@ -94,6 +94,19 @@ class TestPricing:
         assert pricing["input"] == 0.075
         assert pricing["output"] == 0.30
 
+    def test_get_gpt6_luna_pricing(self):
+        """Should return gpt-6-luna pricing."""
+        pricing = get_model_pricing("openai", "gpt-6-luna")
+        assert pricing is not None
+        assert pricing["input"] == 0.10
+        assert pricing["output"] == 0.50
+
+    def test_dated_model_matches_longest_prefix(self):
+        """A dated name should match its own family, not a shorter one."""
+        pricing = get_model_pricing("openai", "gpt-5-mini-2025-08-07")
+        assert pricing == get_model_pricing("openai", "gpt-5-mini")
+        assert pricing != get_model_pricing("openai", "gpt-5")
+
     def test_unknown_model_returns_none(self):
         """Unknown models should return None."""
         pricing = get_model_pricing("openai", "unknown-model-xyz")

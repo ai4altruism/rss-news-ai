@@ -11,16 +11,23 @@ import logging
 from typing import Optional, Dict, Any
 
 
-# Pricing per 1 million tokens (as of January 2026)
+# Pricing per 1 million tokens (OpenAI rows checked against
+# developers.openai.com/api/docs/pricing on 2026-10-18; others as of January 2026)
 # Format: {provider: {model_pattern: {"input": price, "output": price}}}
 PRICING = {
     "openai": {
         # GPT-4o models
         "gpt-4o": {"input": 2.50, "output": 10.00},
         "gpt-4o-mini": {"input": 0.15, "output": 0.60},
+        # GPT-6 models
+        "gpt-6-luna": {"input": 0.10, "output": 0.50},
         # GPT-5 models
+        "gpt-5.6-luna": {"input": 0.20, "output": 1.20},
+        "gpt-5.4-mini": {"input": 0.75, "output": 4.50},
+        "gpt-5.4-nano": {"input": 0.20, "output": 1.25},
         "gpt-5": {"input": 5.00, "output": 20.00},
-        "gpt-5-mini": {"input": 1.00, "output": 4.00},
+        "gpt-5-mini": {"input": 0.25, "output": 2.00},
+        "gpt-5-nano": {"input": 0.05, "output": 0.40},
         # GPT-4 models (legacy)
         "gpt-4-turbo": {"input": 10.00, "output": 30.00},
         "gpt-4": {"input": 30.00, "output": 60.00},
@@ -91,8 +98,9 @@ def get_model_pricing(provider: str, model: str) -> Optional[Dict[str, float]]:
     if model in provider_pricing:
         return provider_pricing[model]
 
-    # Try prefix matching for versioned models (e.g., 'claude-sonnet-4-20250514' -> 'claude-sonnet-4')
-    for pattern, prices in provider_pricing.items():
+    # Try prefix matching for versioned models (e.g., 'claude-sonnet-4-20250514' -> 'claude-sonnet-4').
+    # Longest pattern first, so 'gpt-5-mini-2025-08-07' matches 'gpt-5-mini', not 'gpt-5'.
+    for pattern, prices in sorted(provider_pricing.items(), key=lambda kv: -len(kv[0])):
         if model.startswith(pattern):
             return prices
 

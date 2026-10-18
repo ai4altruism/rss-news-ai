@@ -236,10 +236,10 @@ Models can be specified in two formats:
 
 ```bash
 # Old format (defaults to OpenAI)
-FILTER_MODEL=gpt-4o-mini
+FILTER_MODEL=gpt-6-luna
 
 # New format (explicit provider)
-FILTER_MODEL=openai:gpt-4o-mini
+FILTER_MODEL=openai:gpt-6-luna
 FILTER_MODEL=xai:grok-3-mini
 ```
 
