@@ -1,0 +1,9 @@
+
+Summarize these articles about "Models" in ONE concise paragraph, focusing on key developments in generative AI:
+
+Title: Alpha model released, Summary: Alpha is a new generative model.
+
+Title: Beta funding round, Summary: Beta raised money.
+Second line.
+
+RESPONSE FORMAT: Just one short paragraph.

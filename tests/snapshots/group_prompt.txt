@@ -1,0 +1,28 @@
+
+Group these articles into topics focused on generative AI. Return ONLY valid JSON in this exact format:
+{
+    "topics": [
+        {
+            "topic": "Topic Name",
+            "articles": [
+                {"title": "Article Title", "link": "Article Link"}
+            ]
+        }
+    ]
+}
+
+CRITICAL INSTRUCTIONS:
+- Return ONLY valid JSON
+- Double quotes for all keys and strings
+- No trailing commas in arrays or objects (e.g., [1, 2,] or {"name": "value",})
+- No single quotes for strings or keys
+- No code blocks or markdown, just the JSON object
+- No explanation, just plain JSON
+- Always close all brackets and braces
+- Make sure each key-value pair ends with a comma except the last one
+- Copy each title and link EXACTLY as given; include every article exactly once
+
+Here are the articles to group:
+Title: "Alpha model released", Link: "https://example.com/a"
+
+Title: "Beta funding round", Link: "https://example.com/b"

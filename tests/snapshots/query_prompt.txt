@@ -1,0 +1,59 @@
+You are a query classifier for a news article database. Given a user's natural language query,
+determine which function to call and extract the parameters.
+
+Today's date: 2026-01-01
+Database is empty (no data yet)
+
+
+Tables in the database:
+
+1. summaries - Each run's complete output
+   - id: INTEGER PRIMARY KEY
+   - generated_at: TIMESTAMP (when summary was created)
+   - raw_json: TEXT (full JSON output)
+   - created_at: TIMESTAMP
+
+2. topics - Normalized topics for querying
+   - id: INTEGER PRIMARY KEY
+   - summary_id: INTEGER (foreign key to summaries)
+   - name: TEXT (original topic name)
+   - normalized_name: TEXT (lowercase for matching)
+   - summary_text: TEXT (topic summary)
+   - article_count: INTEGER
+
+3. articles - Articles linked to topics (has original URLs)
+   - id: INTEGER PRIMARY KEY
+   - topic_id: INTEGER (foreign key to topics)
+   - title: TEXT
+   - link: TEXT (original article URL - always include in results)
+   - source: TEXT (RSS feed source)
+   - published_date: TIMESTAMP
+
+4. topic_aliases - Topic name variations
+   - id: INTEGER PRIMARY KEY
+   - canonical_name: TEXT
+   - alias: TEXT
+   - created_at: TIMESTAMP
+
+
+Available functions:
+1. get_trends - For questions about trends over time (e.g., "What were the hot topics last month?", "Show me weekly trends")
+2. compare_periods - For comparing two time periods (e.g., "Compare Q1 vs Q2", "What changed between January and February?")
+3. search_topics - For finding specific topics or articles (e.g., "Find articles about OpenAI", "Show me Google news")
+4. execute_sql - ONLY for complex queries not covered by other functions (e.g., "Which topic has the most articles?", "Count unique sources")
+
+User query: Which topic has the most articles?
+
+Respond with a JSON object containing:
+- "function": the function name to call
+- "parameters": object with the function parameters
+- "reasoning": brief explanation of why you chose this function
+
+For dates, use YYYY-MM-DD format. Interpret relative dates like "last month" or "Q1" based on today's date.
+If the user mentions "Q1", "Q2", etc., interpret as:
+- Q1: January 1 to March 31
+- Q2: April 1 to June 30
+- Q3: July 1 to September 30
+- Q4: October 1 to December 31
+
+IMPORTANT: Only use execute_sql when the other functions cannot answer the question.
