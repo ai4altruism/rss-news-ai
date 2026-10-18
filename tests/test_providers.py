@@ -141,15 +141,17 @@ class TestGetProvider:
 class TestOpenAIProvider:
     """Tests for OpenAIProvider class."""
 
-    def test_is_gpt5_model_true(self):
-        """Should detect gpt-5 models."""
-        provider = OpenAIProvider(model="gpt-5-mini", api_key="test-key")
-        assert provider._is_gpt5_model() is True
+    @pytest.mark.parametrize("model", ["gpt-5-mini", "gpt-5.4-nano", "gpt-6-luna", "o3-mini"])
+    def test_is_reasoning_model_true(self, model):
+        """Every family after gpt-4 reasons, including ones not yet released."""
+        provider = OpenAIProvider(model=model, api_key="test-key")
+        assert provider._is_reasoning_model() is True
 
-    def test_is_gpt5_model_false(self):
-        """Should not detect gpt-4 as gpt-5."""
-        provider = OpenAIProvider(model="gpt-4o-mini", api_key="test-key")
-        assert provider._is_gpt5_model() is False
+    @pytest.mark.parametrize("model", ["gpt-4o-mini", "gpt-4.1-nano", "gpt-3.5-turbo"])
+    def test_is_reasoning_model_false(self, model):
+        """The gpt-4 and gpt-3.5 families do not reason."""
+        provider = OpenAIProvider(model=model, api_key="test-key")
+        assert provider._is_reasoning_model() is False
 
     def test_provider_name(self):
         """Should return 'openai' as provider name."""

@@ -3,8 +3,9 @@
 """
 OpenAI provider implementation using the Responses API.
 
-Supports both gpt-4 and gpt-5 model families with appropriate
-handling for each (temperature, reasoning effort, response parsing).
+Supports the non-reasoning gpt-4 family and the reasoning families
+(gpt-5, gpt-6, o-series) with appropriate handling for each
+(temperature, reasoning effort, response parsing).
 """
 
 import logging
@@ -23,9 +24,15 @@ class OpenAIProvider(BaseProvider):
     def get_provider_name(self) -> str:
         return "openai"
 
-    def _is_gpt5_model(self) -> bool:
-        """Check if this is a gpt-5 family model."""
-        return self.model.startswith("gpt-5")
+    # Families that answer without hidden reasoning tokens. Every newer
+    # family reasons first, rejects `temperature`, and spends reasoning
+    # tokens against max_output_tokens. Listing the old families, rather
+    # than the new ones, keeps the next family from failing every call.
+    NON_REASONING_PREFIXES = ("gpt-4", "gpt-3.5")
+
+    def _is_reasoning_model(self) -> bool:
+        """True unless the model belongs to a known non-reasoning family."""
+        return not self.model.startswith(self.NON_REASONING_PREFIXES)
 
     def complete(
         self,
@@ -37,7 +44,7 @@ class OpenAIProvider(BaseProvider):
         """
         Generate a completion using OpenAI's Responses API.
 
-        Handles gpt-5 models differently:
+        Handles reasoning models (see _is_reasoning_model) differently:
         - No temperature parameter (not supported)
         - Uses low reasoning effort for speed
         - Higher max_tokens to accommodate reasoning tokens
@@ -53,11 +60,12 @@ class OpenAIProvider(BaseProvider):
             "Content-Type": "application/json",
         }
 
-        # gpt-5 models use reasoning tokens that count against max_output_tokens
+        # Reasoning models spend reasoning tokens against max_output_tokens.
+        # Billing is per token used, so a generous cap costs nothing extra.
         # Need higher limit to leave room for actual output after reasoning
         effective_max_tokens = max_tokens
-        if self._is_gpt5_model():
-            effective_max_tokens = max(max_tokens * 4, 4096)
+        if self._is_reasoning_model():
+            effective_max_tokens = max(max_tokens * 8, 16384)
 
         data = {
             "model": self.model,
@@ -65,8 +73,8 @@ class OpenAIProvider(BaseProvider):
             "max_output_tokens": effective_max_tokens,
         }
 
-        # gpt-5 models: no temperature, use low reasoning effort for speed
-        if self._is_gpt5_model():
+        # Reasoning models: no temperature, use low reasoning effort for speed
+        if self._is_reasoning_model():
             data["reasoning"] = {"effort": "low"}
         else:
             data["temperature"] = temperature
@@ -116,7 +124,7 @@ class OpenAIProvider(BaseProvider):
         Parse the OpenAI response to extract text.
 
         Handles multiple response formats:
-        - gpt-5 models: [reasoning block, message block]
+        - reasoning models: [reasoning block, message block]
         - gpt-4 models: [message block]
         """
         output_list = resp_json.get("output", [])

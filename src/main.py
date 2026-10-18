@@ -107,9 +107,9 @@ def main():
 
     # Parse model configuration
     filter_prompt = env_vars.get("FILTER_PROMPT", "")
-    filter_model = env_vars.get("FILTER_MODEL", "gpt-4o-mini")
-    group_model = env_vars.get("GROUP_MODEL", "gpt-4o-mini")
-    summarize_model = env_vars.get("SUMMARIZE_MODEL", "gpt-4o-mini")
+    filter_model = env_vars.get("FILTER_MODEL", "gpt-6-luna")
+    group_model = env_vars.get("GROUP_MODEL", "gpt-5-mini")
+    summarize_model = env_vars.get("SUMMARIZE_MODEL", "gpt-5-mini")
 
     # Get history retention period from args or env
     history_retention_days = (
