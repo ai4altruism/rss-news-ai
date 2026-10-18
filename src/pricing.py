@@ -100,8 +100,12 @@ def get_model_pricing(provider: str, model: str) -> Optional[Dict[str, float]]:
 
     # Try prefix matching for versioned models (e.g., 'claude-sonnet-4-20250514' -> 'claude-sonnet-4').
     # Longest pattern first, so 'gpt-5-mini-2025-08-07' matches 'gpt-5-mini', not 'gpt-5'.
+    # The pattern must end at a '-' boundary, so 'gpt-4.1-mini' never
+    # resolves to 'gpt-4' nor 'gpt-5.5-mini' to 'gpt-5' (unknown beats wrong).
     for pattern, prices in sorted(provider_pricing.items(), key=lambda kv: -len(kv[0])):
-        if model.startswith(pattern):
+        if model.startswith(pattern) and (
+            len(model) == len(pattern) or model[len(pattern)] == "-"
+        ):
             return prices
 
     # Try matching model family (e.g., 'gpt-4o-2024-08-06' -> 'gpt-4o')

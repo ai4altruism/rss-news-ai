@@ -5,8 +5,9 @@ provider the configured model names. With FILTER_MODEL="xai:grok-3-mini" or
 an "anthropic:" model the provider factory then raises "API key required"
 and every batch errors.
 
-The xfail tests state the contract: the key for the configured provider
-reaches call_llm. The passing tests pin the OpenAI path that works today.
+The contract: the key for the configured provider reaches call_llm (OpenAI
+models use the caller's key, other providers read theirs from the
+environment, and an OpenAI key is never sent to another provider).
 """
 
 import json
@@ -22,14 +23,21 @@ from llm_filter import filter_stories
 from summarizer import group_and_summarize
 from query_engine import QueryEngine
 from providers import XAIProvider, AnthropicProvider
-from tests.fakes import known_bug
+
+PROVIDER_ENV = {"xai": "XAI_API_KEY", "anthropic": "ANTHROPIC_API_KEY"}
+
+
+@pytest.fixture(autouse=True)
+def provider_keys(monkeypatch):
+    """Non-OpenAI providers take their key from the environment."""
+    for name in PROVIDER_ENV.values():
+        monkeypatch.setenv(name, "sk-from-env")
 
 ARTICLES = [{"title": "Alpha", "link": "https://example.com/a", "summary": "s"}]
 NON_OPENAI_MODELS = [
     ("xai:grok-3-mini", "xai"),
     ("anthropic:claude-sonnet-4-20250514", "anthropic"),
 ]
-KEY_BUG = "call sites pass only {'openai': key}, so non-OpenAI models error every call"
 
 
 def _group_and_summary_llm(**kwargs):
@@ -60,7 +68,6 @@ class TestOpenAIKeyPassesToday:
 
 class TestConfiguredProviderKey:
 
-    @known_bug(KEY_BUG)
     @pytest.mark.parametrize("model,provider", NON_OPENAI_MODELS)
     @patch("llm_filter.call_llm")
     def test_filter_passes_key_of_configured_provider(self, mock_llm, model, provider):
@@ -70,7 +77,6 @@ class TestConfiguredProviderKey:
 
         assert mock_llm.call_args.kwargs["api_keys"].get(provider)
 
-    @known_bug(KEY_BUG)
     @pytest.mark.parametrize("model,provider", NON_OPENAI_MODELS)
     @patch("summarizer.call_llm", side_effect=_group_and_summary_llm)
     def test_group_call_passes_key_of_configured_provider(self, mock_llm, model, provider):
@@ -80,7 +86,6 @@ class TestConfiguredProviderKey:
                           if c.kwargs["task_type"] == "group")
         assert group_call.kwargs["api_keys"].get(provider)
 
-    @known_bug(KEY_BUG)
     @pytest.mark.parametrize("model,provider", NON_OPENAI_MODELS)
     @patch("summarizer.call_llm", side_effect=_group_and_summary_llm)
     def test_summarize_call_passes_key_of_configured_provider(self, mock_llm, model, provider):
@@ -90,7 +95,6 @@ class TestConfiguredProviderKey:
                               if c.kwargs["task_type"] == "summarize")
         assert summarize_call.kwargs["api_keys"].get(provider)
 
-    @known_bug(KEY_BUG)
     @pytest.mark.parametrize("model,provider", NON_OPENAI_MODELS)
     @patch("query_engine.call_llm", return_value="not json")
     def test_query_engine_passes_key_of_configured_provider(
@@ -107,7 +111,6 @@ class TestEndToEndThroughRealFactory:
     """Same bug, observed through the real call_llm -> get_provider path
     with the provider's HTTP layer stubbed out."""
 
-    @known_bug(KEY_BUG)
     @patch("utils.save_llm_usage")
     @patch.object(XAIProvider, "complete")
     def test_filter_with_xai_model_reaches_provider(self, mock_complete, _save):
@@ -121,3 +124,9 @@ class TestEndToEndThroughRealFactory:
             ARTICLES, "p", "xai:grok-3-mini", "sk-key")
 
         assert len(accepted) == 1 and errored == []
+
+    def test_openai_key_is_never_sent_to_another_provider(self, monkeypatch):
+        monkeypatch.delenv("XAI_API_KEY")
+
+        from utils import build_api_keys
+        assert build_api_keys("xai:grok-3-mini", "sk-openai") == {}

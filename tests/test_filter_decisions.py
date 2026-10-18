@@ -18,7 +18,7 @@ import pytest
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 
 from llm_filter import filter_stories
-from tests.fakes import known_bug
+
 
 A, B, C = (
     {"title": name, "link": f"https://example.com/{name}", "summary": "s"}
@@ -84,7 +84,6 @@ class TestIndexHandlingThatWorks:
 
 class TestIndexHandlingBugs:
 
-    @known_bug("0-based indices shift every decision onto the previous article without erroring")
     def test_zero_based_indices_do_not_silently_shift(self):
         # Model meant: A=Yes, B=No, C=Yes, but answered 0-based.
         accepted, rejected, errored = _run([
@@ -97,7 +96,6 @@ class TestIndexHandlingBugs:
         index_zero_handled = _titles(accepted) == ["A", "C"] and _titles(rejected) == ["B"]
         assert batch_errored or index_zero_handled
 
-    @known_bug("duplicate indices resolve last-wins instead of erroring the article")
     def test_conflicting_duplicate_indices_error_the_article(self):
         accepted, rejected, errored = _run([
             {"index": 1, "decision": "Yes"},

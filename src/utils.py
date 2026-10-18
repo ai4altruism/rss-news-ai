@@ -17,6 +17,31 @@ from pricing import calculate_cost
 from history_db import save_llm_usage, init_database
 
 
+# Environment variable(s) holding each provider's API key
+PROVIDER_KEY_ENV = {
+    "xai": ("XAI_API_KEY",),
+    "anthropic": ("ANTHROPIC_API_KEY",),
+    "google": ("GOOGLE_API_KEY", "GEMINI_API_KEY"),
+}
+
+
+def build_api_keys(model_config: str, openai_api_key: Optional[str] = None) -> dict:
+    """
+    Build the api_keys dict for call_llm, carrying only the key of the
+    provider that model_config names. OpenAI models use the key the caller
+    already holds; other providers read theirs from the environment, so an
+    OpenAI key is never sent to another provider.
+    """
+    provider_name, _ = parse_model_config(model_config)
+    if provider_name == "openai":
+        return {"openai": openai_api_key}
+    for env_name in PROVIDER_KEY_ENV.get(provider_name, ()):
+        key = os.environ.get(env_name)
+        if key:
+            return {provider_name: key}
+    return {}
+
+
 def call_llm(
     model_config: str,
     prompt: str,
@@ -65,12 +90,20 @@ def call_llm(
     )
 
     # Call provider and get response with usage metadata
-    response_text, usage = provider.complete(
-        prompt=prompt,
-        instructions=instructions,
-        max_tokens=max_tokens,
-        temperature=temperature,
-    )
+    try:
+        response_text, usage = provider.complete(
+            prompt=prompt,
+            instructions=instructions,
+            max_tokens=max_tokens,
+            temperature=temperature,
+        )
+    except Exception as e:
+        # A provider that fails after the response arrived (truncated or
+        # unparseable output) attaches the usage it already incurred
+        failed_usage = getattr(e, "usage", None)
+        if isinstance(failed_usage, LLMUsageMetadata):
+            _log_usage(provider, failed_usage, task_type)
+        raise
 
     # Log usage to database (non-fatal if it fails)
     _log_usage(provider, usage, task_type)

@@ -8,7 +8,7 @@ from dotenv import dotenv_values
 from rss_reader import fetch_feeds
 from llm_filter import filter_stories
 from summarizer import group_and_summarize
-from utils import setup_logger
+from utils import setup_logger, PROVIDER_KEY_ENV
 from article_history import ArticleHistory
 
 # Import optional output modules
@@ -90,6 +90,13 @@ def main():
         **{k: v for k, v in dotenv_values(".env").items() if v is not None},
     }
     openai_api_key = env_vars.get("OPENAI_API_KEY")
+    # Non-OpenAI providers read their key from the process environment
+    # (utils.build_api_keys); mirror .env values there so .env keeps
+    # precedence, as it does for the keys above.
+    for key_names in PROVIDER_KEY_ENV.values():
+        for key_name in key_names:
+            if env_vars.get(key_name):
+                os.environ[key_name] = env_vars[key_name]
 
     # Setup logger
     logger = setup_logger()
@@ -281,6 +288,9 @@ def main():
     # output succeeds, so a failed delivery is retried on the next run
     # instead of being silently lost.
     delivered = False
+    # Slack delivers in pages; when a later page fails, this names the
+    # articles on the pages that did go out so they are not reposted.
+    delivered_links = set()
 
     if args.output == "console":
         # Output the structured JSON summary to console
@@ -313,9 +323,16 @@ def main():
                     return
 
                 logger.info("Publishing to Slack...")
-                delivered = publish_to_slack(summary, slack_webhook)
+                delivered = publish_to_slack(
+                    summary, slack_webhook, delivered_links=delivered_links
+                )
                 if delivered:
                     logger.info("Successfully published to Slack.")
+                elif delivered_links:
+                    logger.error(
+                        "Slack delivery was partial; articles on the pages that "
+                        "went out are committed, the rest will be retried next run."
+                    )
                 else:
                     logger.error(
                         "Failed to publish to Slack. Articles will be retried next run."
@@ -368,17 +385,34 @@ def main():
             )
 
     # Post-delivery bookkeeping: only a delivered article is committed to
-    # history and the embedding store.
+    # history and the embedding store. A partial multi-page delivery
+    # commits exactly the articles that went out.
     if delivered:
+        delivered_articles = filtered_articles
+        delivered_summary = summary
+    else:
+        delivered_articles = [
+            a for a in filtered_articles if a.get("link") in delivered_links
+        ]
+        delivered_summary = {
+            **summary,
+            "topics": [
+                t for t in summary.get("topics", [])
+                if t.get("articles")
+                and all(x.get("link") in delivered_links for x in t["articles"])
+            ],
+        }
+
+    if delivered_articles:
         if not args.ignore_history:
-            article_history.mark_as_published(filtered_articles)
-            logger.info(f"Marked {len(filtered_articles)} articles as published.")
-        persist_embeddings_for(filtered_articles)
+            article_history.mark_as_published(delivered_articles)
+            logger.info(f"Marked {len(delivered_articles)} articles as published.")
+        persist_embeddings_for(delivered_articles)
 
         # Save to historical database (non-fatal if it fails)
-        if save_summary_to_db:
+        if save_summary_to_db and delivered_summary.get("topics"):
             try:
-                summary_id = save_summary_to_db(summary)
+                summary_id = save_summary_to_db(delivered_summary)
                 if summary_id:
                     logger.info(f"Summary saved to historical database (ID: {summary_id})")
                 else:

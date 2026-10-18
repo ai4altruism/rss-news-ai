@@ -18,6 +18,13 @@ os.environ['TESTING'] = 'true'
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 
 
+@pytest.fixture(autouse=True)
+def _isolated_history_db(tmp_path, monkeypatch):
+    """Point the default history DB at a per-test temp file so no test can
+    write to the real one (tests that need a specific path override it)."""
+    monkeypatch.setenv("HISTORY_DB_PATH", str(tmp_path / "default_history.db"))
+
+
 @pytest.fixture
 def temp_db_path(tmp_path):
     """Provide a temporary database path for testing."""

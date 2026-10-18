@@ -410,7 +410,7 @@ REJECTED = {"title": "Bad", "link": "https://example.com/bad", "summary": "s"}
 
 
 def _run_gated_main(tmp_path, monkeypatch, output, slack_ok=True,
-                    dashboard_available=True):
+                    dashboard_available=True, publish=None):
     """Run main() with the pipeline mocked around two articles (one the
     filter accepts, one it rejects). Returns (history entries, persisted
     embedding urls)."""
@@ -456,7 +456,9 @@ def _run_gated_main(tmp_path, monkeypatch, output, slack_ok=True,
             "articles": [{"title": "Good", "link": "https://example.com/good"}],
         }]},
     )
-    monkeypatch.setattr(main_mod, "publish_to_slack", lambda *a, **kw: slack_ok)
+    monkeypatch.setattr(
+        main_mod, "publish_to_slack", publish or (lambda *a, **kw: slack_ok)
+    )
     monkeypatch.setattr(main_mod, "save_summary_to_db", lambda s: 1)
     monkeypatch.setattr(
         main_mod, "save_summary",
@@ -494,6 +496,32 @@ class TestDeliveryGating:
         assert "https://example.com/bad" in persisted
         # ...but the accepted article must NOT be committed anywhere,
         # so the next run retries it.
+        assert "https://example.com/good" not in recorded
+        assert "https://example.com/good" not in persisted
+
+
+class TestPartialSlackDelivery:
+    """A multi-page delivery that fails midway commits exactly the pages
+    that went out, so the retry does not repost them."""
+
+    def test_partial_delivery_commits_only_delivered_articles(self, tmp_path, monkeypatch):
+        def partial(summary, webhook, delivered_links=None):
+            delivered_links.add("https://example.com/good")
+            return False
+
+        recorded, persisted = _run_gated_main(
+            tmp_path, monkeypatch, output="slack", publish=partial
+        )
+        assert "https://example.com/good" in recorded
+        assert "https://example.com/good" in persisted
+
+    def test_partial_delivery_leaves_undelivered_retryable(self, tmp_path, monkeypatch):
+        def nothing_delivered(summary, webhook, delivered_links=None):
+            return False
+
+        recorded, persisted = _run_gated_main(
+            tmp_path, monkeypatch, output="slack", publish=nothing_delivered
+        )
         assert "https://example.com/good" not in recorded
         assert "https://example.com/good" not in persisted
 

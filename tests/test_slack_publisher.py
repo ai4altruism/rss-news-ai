@@ -21,7 +21,7 @@ from slack_publisher import (
     publish_to_slack,
     send_slack_message,
 )
-from tests.fakes import known_bug
+
 
 SLACK_SECTION_TEXT_LIMIT = 3000
 WEBHOOK = "https://hooks.example.invalid/T000/B000/XXXX"
@@ -79,19 +79,16 @@ class TestFormatForSlack:
 
 class TestSlackLimitsAndEscaping:
 
-    @known_bug("summary is posted as one section with no 3000-char cap; Slack rejects the whole message")
     def test_section_text_never_exceeds_slack_limit_for_long_summary(self):
         blocks = format_for_slack({"topics": [topic(summary="word " * 1000)]})
         assert all(len(t) <= SLACK_SECTION_TEXT_LIMIT for t in section_texts(blocks))
 
-    @known_bug("article list section has no 3000-char cap when links are long")
     def test_section_text_never_exceeds_slack_limit_for_long_links(self):
         data = {"topics": [topic(n_articles=MAX_ARTICLES_PER_TOPIC,
                                  link="https://example.com/" + "p" * 400)]}
         blocks = format_for_slack(data)
         assert all(len(t) <= SLACK_SECTION_TEXT_LIMIT for t in section_texts(blocks))
 
-    @known_bug("topic name, summary and article title are inserted unescaped, so <!channel> pings the channel")
     @pytest.mark.parametrize("field", ["topic", "summary", "title"])
     def test_broadcast_mention_is_escaped(self, field):
         t = topic()
@@ -155,9 +152,10 @@ class TestPublishAndSend:
 
 class TestPartialPublishDuplicates:
 
-    @known_bug("page 1 posts, page 2 fails, publish returns False, so the retry reposts page 1")
     def test_retry_after_partial_failure_does_not_repost_delivered_topics(self):
-        data = {"topics": [topic(f"T{i}") for i in range(MAX_TOPICS_PER_MESSAGE + 1)]}
+        # Distinct links so delivery can be tracked per article
+        data = {"topics": [topic(f"T{i}", link=f"https://example.com/{i}")
+                           for i in range(MAX_TOPICS_PER_MESSAGE + 1)]}
         delivered = []
 
         def make_send(fail_on_call):
@@ -172,10 +170,27 @@ class TestPartialPublishDuplicates:
                 return True
             return send
 
+        delivered_links = set()
         with patch("slack_publisher.send_slack_message", side_effect=make_send(2)):
-            first = publish_to_slack(data, WEBHOOK)   # page 1 posts, page 2 fails
+            first = publish_to_slack(data, WEBHOOK, delivered_links=delivered_links)
+
+        # Next run: the caller (main.py) has recorded delivered_links as
+        # published, so only the undelivered articles come back
+        retry = {"topics": [t for t in data["topics"]
+                            if t["articles"][0]["link"] not in delivered_links]}
         with patch("slack_publisher.send_slack_message", side_effect=make_send(0)):
-            publish_to_slack(data, WEBHOOK)           # next run, same articles
+            publish_to_slack(retry, WEBHOOK, delivered_links=delivered_links)
 
         assert first is False
         assert len(delivered) == len(set(delivered)), f"reposted: {delivered}"
+        assert len(delivered) == MAX_TOPICS_PER_MESSAGE + 1
+
+    def test_delivered_links_names_only_pages_slack_accepted(self):
+        data = {"topics": [topic(f"T{i}", link=f"https://example.com/{i}")
+                           for i in range(MAX_TOPICS_PER_MESSAGE + 1)]}
+        delivered_links = set()
+        with patch("slack_publisher.send_slack_message", side_effect=[True, False]):
+            publish_to_slack(data, WEBHOOK, delivered_links=delivered_links)
+
+        assert delivered_links == {f"https://example.com/{i}"
+                                   for i in range(MAX_TOPICS_PER_MESSAGE)}

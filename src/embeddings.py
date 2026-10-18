@@ -21,6 +21,8 @@ from history_db import (
     get_recent_embeddings,
     save_llm_usage,
     cleanup_old_embeddings,
+    save_suppressed_duplicates,
+    get_suppressed_urls,
 )
 from pricing import calculate_embedding_cost
 
@@ -30,6 +32,10 @@ DEFAULT_EMBEDDING_MODEL = "text-embedding-3-small"
 DEFAULT_SIMILARITY_THRESHOLD = 0.85
 DEFAULT_LOOKBACK_DAYS = 7
 DEFAULT_RETENTION_DAYS = 30
+
+# (new_dim, stored_dim) pairs already warned about, so a store left over
+# from another embedding model logs once rather than once per row
+_warned_dimension_mismatch = set()
 
 
 def get_embedding_text(article: Dict[str, Any]) -> str:
@@ -249,6 +255,18 @@ def find_similar_articles(
         # Deserialize stored embedding from bytes
         stored_embedding = np.frombuffer(stored["embedding"], dtype=np.float32)
 
+        # A different embedding model leaves vectors of another length that
+        # cannot be compared; skip them instead of raising
+        if stored_embedding.shape != new_embedding.shape:
+            dims = (new_embedding.shape[0], stored_embedding.shape[0])
+            if dims not in _warned_dimension_mismatch:
+                _warned_dimension_mismatch.add(dims)
+                logging.warning(
+                    f"Skipping stored embeddings of dimension {dims[1]} "
+                    f"(current model produces {dims[0]}); they age out with retention."
+                )
+            continue
+
         similarity = cosine_similarity(new_embedding, stored_embedding)
 
         if similarity >= threshold:
@@ -323,9 +341,36 @@ def filter_semantic_duplicates(
         f"threshold={threshold}, lookback={days} days"
     )
 
+    if retention_days is None:
+        retention_days = int(
+            os.environ.get("EMBEDDING_RETENTION_DAYS", DEFAULT_RETENTION_DAYS)
+        )
+
     # Get recent embeddings from database
     recent = get_recent_embeddings(days=days, db_path=db_path)
     logging.info(f"Loaded {len(recent)} recent embeddings for comparison")
+
+    filtered_info = []
+
+    # Articles dropped as duplicates on an earlier run stay dropped for the
+    # whole retention period, even after the original they matched has left
+    # the similarity lookback window. Skipping them here also saves their
+    # embedding calls.
+    suppressed = get_suppressed_urls(days=retention_days, db_path=db_path)
+    previously_dropped = [a for a in articles if a.get("link") in suppressed]
+    articles = [a for a in articles if a.get("link") not in suppressed]
+    for article in previously_dropped:
+        filtered_info.append({
+            "title": article.get("title", "Unknown"),
+            "url": article.get("link", ""),
+            "similar_to": "(earlier duplicate)",
+            "similar_url": "",
+            "similarity": 1.0,
+        })
+    if previously_dropped:
+        logging.info(
+            f"{len(previously_dropped)} article(s) suppressed as earlier duplicates"
+        )
 
     # Generate embedding texts for all articles
     embedding_texts = [get_embedding_text(article) for article in articles]
@@ -336,7 +381,7 @@ def filter_semantic_duplicates(
     )
 
     unique_articles = []
-    filtered_info = []
+    new_duplicates = []
     pending_embeddings = []
 
     for article, embedding, embed_text in zip(articles, embeddings, embedding_texts):
@@ -357,13 +402,15 @@ def filter_semantic_duplicates(
         if similar:
             # Article is a duplicate
             most_similar = similar[0]
-            filtered_info.append({
+            info = {
                 "title": article.get("title", "Unknown"),
                 "url": article.get("link", ""),
                 "similar_to": most_similar[2],
                 "similar_url": most_similar[0],
                 "similarity": most_similar[1],
-            })
+            }
+            filtered_info.append(info)
+            new_duplicates.append(info)
             logging.debug(
                 f"Filtered duplicate: '{article.get('title')}' "
                 f"similar to '{most_similar[2]}' (score: {most_similar[1]:.3f})"
@@ -395,15 +442,17 @@ def filter_semantic_duplicates(
                     "embedding": embedding.tobytes(),
                 })
 
+    # Record what was dropped. A duplicate verdict is final (it matched an
+    # article that was delivered or rejected), so this is not deferred.
+    save_suppressed_duplicates(
+        [d for d in new_duplicates if d["url"]], db_path=db_path
+    )
+
     # Cleanup old embeddings periodically
-    if retention_days is None:
-        retention_days = int(
-            os.environ.get("EMBEDDING_RETENTION_DAYS", DEFAULT_RETENTION_DAYS)
-        )
     cleanup_old_embeddings(days=retention_days, db_path=db_path)
 
     stats = {
-        "total": len(articles),
+        "total": len(articles) + len(previously_dropped),
         "unique": len(unique_articles),
         "duplicates": len(filtered_info),
         "tokens_used": total_tokens,

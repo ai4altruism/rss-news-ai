@@ -13,7 +13,7 @@ from typing import Optional, Dict, Any, List, Tuple
 from datetime import datetime, timedelta
 from dotenv import dotenv_values
 
-from utils import call_llm
+from utils import call_llm, build_api_keys
 from history_db import (
     get_db_path,
     get_db_connection,
@@ -357,7 +357,7 @@ IMPORTANT: Only use execute_sql when the other functions cannot answer the quest
             response = call_llm(
                 model_config=self.model,
                 prompt=prompt,
-                api_keys={"openai": self.api_key},
+                api_keys=build_api_keys(self.model, self.api_key),
                 instructions="You classify database queries and extract parameters. Always respond with valid JSON.",
                 max_tokens=1000,
                 temperature=0.0,

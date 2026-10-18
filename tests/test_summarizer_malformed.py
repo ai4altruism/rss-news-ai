@@ -18,7 +18,7 @@ import pytest
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 
 from summarizer import group_and_summarize, unify_topics
-from tests.fakes import known_bug
+
 
 ARTICLES = [
     {"title": "Alpha", "link": "https://example.com/a", "summary": "alpha"},
@@ -68,15 +68,12 @@ class TestUnifyTopics:
     def test_empty_input(self):
         assert unify_topics([]) == []
 
-    @known_bug("a non-dict topic entry raises AttributeError in unify_topics")
     def test_string_topic_does_not_raise(self):
         unify_topics(["Models"])
 
-    @known_bug('"topic": null raises AttributeError (None.strip()) in unify_topics')
     def test_null_topic_name_does_not_raise(self):
         unify_topics([{"topic": None, "articles": []}])
 
-    @known_bug('"articles": null raises TypeError in unify_topics')
     def test_null_articles_does_not_raise(self):
         unify_topics([{"topic": "X", "articles": None}])
 
@@ -113,7 +110,6 @@ class TestGroupAndSummarizeWellFormed:
 
 class TestGroupAndSummarizeMalformed:
 
-    @known_bug("malformed grouping JSON (string topic, null topic name, dict topics, null articles) aborts the run")
     @pytest.mark.parametrize("case", sorted(MALFORMED))
     def test_malformed_grouping_does_not_raise_and_keeps_articles(self, case):
         result = _run(MALFORMED[case])
